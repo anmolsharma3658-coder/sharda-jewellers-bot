@@ -1,5 +1,6 @@
 """Gemini-powered conversational AI for Sharda Jewellers WhatsApp bot."""
 
+import asyncio
 import logging
 from google import genai
 from google.genai import types
@@ -9,7 +10,10 @@ from app.gold_rates import get_rates, format_rates_message
 logger = logging.getLogger(__name__)
 
 client = genai.Client(api_key=GEMINI_API_KEY)
-MODEL = "gemini-2.5-flash"
+MODEL = "gemini-2.0-flash-lite"
+
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 2.0
 
 SYSTEM_PROMPT = """
 तुम "शारदा ज्वेलर्स" के आधिकारिक WhatsApp सहायक हो।
@@ -124,19 +128,31 @@ async def generate_reply(phone: str, user_text: str, user_name: str = "") -> tup
 
     history.append(types.Content(role="user", parts=[types.Part(text=full_input)]))
 
-    try:
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=history,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                temperature=0.7,
-                max_output_tokens=1024,
-            ),
-        )
-        reply_text = response.text or "क्षमा करें, कुछ तकनीकी समस्या हुई। कृपया दोबारा कोशिश करें।"
-    except Exception:
-        logger.error("Gemini API call failed", exc_info=True)
+    reply_text = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = client.models.generate_content(
+                model=MODEL,
+                contents=history,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    temperature=0.7,
+                    max_output_tokens=1024,
+                ),
+            )
+            reply_text = response.text or "क्षमा करें, कुछ तकनीकी समस्या हुई। कृपया दोबारा कोशिश करें।"
+            break
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+                logger.warning("Rate limited (attempt %d/%d), retrying in %.1fs", attempt + 1, MAX_RETRIES, delay)
+                await asyncio.sleep(delay)
+                continue
+            logger.error("Gemini API call failed", exc_info=True)
+            break
+
+    if reply_text is None:
         reply_text = "क्षमा करें, अभी हमारे सिस्टम में कुछ समस्या है। कृपया कुछ देर बाद कोशिश करें या दुकान पर कॉल करें।"
         history.append(types.Content(role="model", parts=[types.Part(text=reply_text)]))
         return reply_text, False
