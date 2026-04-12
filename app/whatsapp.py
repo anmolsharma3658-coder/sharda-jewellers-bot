@@ -117,6 +117,29 @@ async def send_list_menu(to: str, body: str, button_text: str, sections: list[di
         return True
 
 
+async def send_image(to: str, image_url: str, caption: str = "") -> bool:
+    """Send an image message via URL."""
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    image_payload: dict = {"link": image_url}
+    if caption:
+        image_payload["caption"] = caption
+    data = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "image",
+        "image": image_payload,
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(WHATSAPP_API_URL, headers=headers, json=data)
+        if resp.status_code != 200:
+            logger.error("WhatsApp image send failed: %s %s", resp.status_code, resp.text)
+            return False
+        return True
+
+
 async def mark_read(msg_id: str) -> None:
     """Mark a message as read (blue ticks)."""
     headers = {

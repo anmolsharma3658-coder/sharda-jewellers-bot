@@ -86,6 +86,12 @@ Google: https://business.google.com/n/5073554692225386022/searchprofile?hl=en
   → जवाब की शुरुआत में EXACTLY यह लिखो: [MENU_REQUEST]
   → फिर स्वागत संदेश
 
+• "photo", "फोटो", "तस्वीर", "picture", "image", "दिखाओ", "collection dikhao",
+  "गहने दिखाओ", "show me", "photos bhejo", "gallery", "designs dikhao",
+  "कुछ दिखाओ", "नमूने दिखाओ", "sample"
+  → जवाब की शुरुआत में EXACTLY यह लिखो: [PHOTOS_REQUEST]
+  → फिर एक छोटा वाक्य जैसे "जी बिल्कुल! हमारे कुछ गहनों की तस्वीरें भेज रहे हैं:"
+
 बाकी सभी सवालों का जवाब अपनी बुद्धिमानी से दो, ऊपर दी गई जानकारी के आधार पर।
 """
 
@@ -106,10 +112,10 @@ def _trim_history(phone: str) -> None:
         _conversations[phone] = hist[-MAX_HISTORY:]
 
 
-async def generate_reply(phone: str, user_text: str, user_name: str = "") -> str:
+async def generate_reply(phone: str, user_text: str, user_name: str = "") -> tuple[str, bool]:
     """Generate a chatbot reply for the given user message.
 
-    Returns the final text to send back to the user.
+    Returns (reply_text, wants_photos).
     """
     history = _get_history(phone)
 
@@ -133,7 +139,7 @@ async def generate_reply(phone: str, user_text: str, user_name: str = "") -> str
         logger.error("Gemini API call failed", exc_info=True)
         reply_text = "क्षमा करें, अभी हमारे सिस्टम में कुछ समस्या है। कृपया कुछ देर बाद कोशिश करें या दुकान पर कॉल करें।"
         history.append(types.Content(role="model", parts=[types.Part(text=reply_text)]))
-        return reply_text
+        return reply_text, False
 
     if "[RATES_REQUEST]" in reply_text:
         rates = await get_rates()
@@ -144,10 +150,14 @@ async def generate_reply(phone: str, user_text: str, user_name: str = "") -> str
     if "[MENU_REQUEST]" in reply_text:
         reply_text = reply_text.replace("[MENU_REQUEST]", "").strip()
 
+    _has_photos = "[PHOTOS_REQUEST]" in reply_text
+    if _has_photos:
+        reply_text = reply_text.replace("[PHOTOS_REQUEST]", "").strip()
+
     history.append(types.Content(role="model", parts=[types.Part(text=reply_text)]))
     _trim_history(phone)
 
-    return reply_text
+    return reply_text, _has_photos
 
 
 def is_menu_request(reply: str) -> bool:

@@ -4,8 +4,9 @@ import logging
 from fastapi import FastAPI, Request, Query, Response
 from fastapi.responses import HTMLResponse
 from app.config import WHATSAPP_VERIFY_TOKEN
-from app.whatsapp import extract_message, send_text, send_interactive_buttons, mark_read
+from app.whatsapp import extract_message, send_text, send_image, send_interactive_buttons, mark_read
 from app.chatbot import generate_reply
+from app.google_photos import get_store_photos
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,7 +22,7 @@ app = FastAPI(
 
 MENU_BUTTONS = [
     {"id": "btn_rates", "title": "आज के भाव 🪙"},
-    {"id": "btn_products", "title": "हमारे गहने 💎"},
+    {"id": "btn_photos", "title": "फोटो देखें 📸"},
     {"id": "btn_custom", "title": "कस्टम ऑर्डर ✨"},
 ]
 
@@ -139,22 +140,47 @@ async def receive_message(request: Request):
     if text.lower() in ("btn_rates", "bhav", "भाव", "rate", "rates", "gold rate",
                          "sone ka bhav", "सोने का भाव", "chandi ka bhav",
                          "चाँदी का भाव", "aaj ka bhav", "आज के भाव"):
-        reply = await generate_reply(phone, "आज के सोने चाँदी के भाव बताओ", name)
+        reply, _ = await generate_reply(phone, "आज के सोने चाँदी के भाव बताओ", name)
         await send_text(phone, reply)
         return {"status": "rates_sent"}
 
+    if text.lower() in ("btn_photos", "photo", "photos", "फोटो", "तस्वीर",
+                         "gallery", "दिखाओ", "pictures", "फोटो देखें"):
+        return await _handle_photos(phone, name)
+
     if text.lower() in ("btn_products", "products", "गहने", "jewellery", "jewelry",
                          "collection", "हमारे गहने"):
-        reply = await generate_reply(phone, "आपके यहाँ कौन-कौन से गहने मिलते हैं?", name)
+        reply, _ = await generate_reply(phone, "आपके यहाँ कौन-कौन से गहने मिलते हैं?", name)
         await send_text(phone, reply)
         return {"status": "products_sent"}
 
     if text.lower() in ("btn_custom", "custom", "कस्टम", "custom order",
                          "कस्टम ऑर्डर", "apna design"):
-        reply = await generate_reply(phone, "कस्टम ऑर्डर कैसे करें?", name)
+        reply, _ = await generate_reply(phone, "कस्टम ऑर्डर कैसे करें?", name)
         await send_text(phone, reply)
         return {"status": "custom_sent"}
 
-    reply = await generate_reply(phone, text, name)
+    reply, wants_photos = await generate_reply(phone, text, name)
     await send_text(phone, reply)
+    if wants_photos:
+        await _send_photos(phone)
     return {"status": "replied"}
+
+
+async def _send_photos(phone: str, count: int = 5) -> None:
+    """Fetch and send store photos to the customer."""
+    photos = await get_store_photos(count)
+    if not photos:
+        await send_text(phone, "क्षमा करें, अभी फोटो उपलब्ध नहीं हैं। कृपया दुकान पर आकर हमारा कलेक्शन देखें।")
+        return
+    for i, url in enumerate(photos):
+        caption = "शारदा ज्वेलर्स, बेमेतरा" if i == 0 else ""
+        await send_image(phone, url, caption)
+
+
+async def _handle_photos(phone: str, name: str) -> dict:
+    """Handle a direct photo request (from button or keyword)."""
+    greeting = f"📸 {'जी ' + name + ' जी!' if name else 'जी!'} हमारे कुछ गहनों की तस्वीरें भेज रहे हैं:"
+    await send_text(phone, greeting)
+    await _send_photos(phone)
+    return {"status": "photos_sent"}
