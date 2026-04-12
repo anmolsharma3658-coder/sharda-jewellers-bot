@@ -151,8 +151,8 @@ async def receive_message(request: Request):
     logger.info("Message from %s (%s): %s", name or "unknown", phone, text[:100])
     await mark_read(msg_id)
 
-    # ── Owner message → relay to customer or handle end ──
-    if phone in OWNER_PHONES:
+    # ── Owner message during live session → relay to customer ──
+    if phone in OWNER_PHONES and (owner_has_session(phone) or find_pending_session() or is_end_command(text)):
         return await _handle_owner_message(phone, text, name)
 
     # ── Customer in live chat → forward to owner ──

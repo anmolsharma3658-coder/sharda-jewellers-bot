@@ -125,6 +125,14 @@ Google: https://business.google.com/n/5073554692225386022/searchprofile?hl=en
   → ग्राहक को बताओ कि उनके अगले मैसेज सीधे मालिक को जाएंगे।
 
 बाकी सभी सवालों का जवाब अपनी बुद्धिमानी से दो, ऊपर दी गई जानकारी के आधार पर।
+
+═══════════════════════════════════════
+CRITICAL OUTPUT RULES
+═══════════════════════════════════════
+- Every user message starts with [CONTEXT: ...] metadata. This is FOR YOU ONLY.
+- NEVER include [CONTEXT], "भाषा:", language labels, or any metadata in your reply.
+- Your reply must contain ONLY the actual message for the customer.
+- Read the भाषा= value to decide your reply language, then FORGET it — don't print it.
 """
 
 _conversations: dict[str, list[types.Content]] = {}
@@ -153,7 +161,7 @@ async def generate_reply(phone: str, user_text: str, user_name: str = "") -> tup
 
     lang = detect_language(user_text)
     customer = get_customer(phone)
-    context_parts = [f"भाषा: {lang}"]
+    context_parts = []
     if user_name:
         context_parts.append(f"ग्राहक का नाम: {user_name}")
     if customer:
@@ -164,8 +172,8 @@ async def generate_reply(phone: str, user_text: str, user_name: str = "") -> tup
             context_parts.append(f"टैग: {customer['tags']}")
         if customer.get("notes"):
             context_parts.append(f"नोट: {customer['notes']}")
-    name_context = f" ({', '.join(context_parts)})"
-    full_input = f"{user_text}{name_context}"
+    meta = f"[CONTEXT: भाषा={lang}, {', '.join(context_parts)}]" if context_parts else f"[CONTEXT: भाषा={lang}]"
+    full_input = f"{meta}\n{user_text}"
 
     history.append(types.Content(role="user", parts=[types.Part(text=full_input)]))
 
