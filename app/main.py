@@ -14,7 +14,7 @@ from app.google_photos import get_store_photos
 from app.livechat import (
     start_session, customer_in_session, owner_has_session,
     find_pending_session, link_owner, touch,
-    end_session_for_owner, is_end_command,
+    end_session_for_owner, is_end_command, owner_end_chat_hint,
 )
 from app.customers import (
     upsert_customer, get_customer, get_all_customers, get_customer_count,
@@ -231,8 +231,8 @@ async def _start_live_chat(customer_phone: str, customer_name: str, customer_msg
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"📋 *बातचीत:*\n{chat_summary}\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "👉 *सीधे यहाँ जवाब दें* — आपका मैसेज ग्राहक को पहुँच जाएगा।\n"
-        "👉 चैट खत्म करने के लिए \"बंद\" लिखें।"
+        "👉 *सीधे यहाँ जवाब दें* — आपका मैसेज ग्राहक को पहुँच जाएगा।\n\n"
+        f"{owner_end_chat_hint()}"
     )
 
     for op in OWNER_PHONES:
@@ -248,7 +248,11 @@ async def _handle_owner_message(owner_phone: str, text: str, name: str) -> dict:
         if customer_phone:
             cust = get_customer(customer_phone)
             cust_lang = cust.get("language", "hi") if cust else "hi"
-            await send_text(owner_phone, "✅ लाइव चैट समाप्त। ग्राहक अब बॉट से बात करेगा।")
+            await send_text(
+                owner_phone,
+                "✅ *Live chat ended.* / लाइव चैट समाप्त।\n"
+                "The customer is back with the AI assistant. / ग्राहक अब बॉट से बात करेगा।",
+            )
             await send_text(customer_phone, session_ended_msg(cust_lang))
             return {"status": "session_ended"}
         await send_text(owner_phone, "कोई लाइव चैट चल नहीं रही।")
@@ -273,8 +277,8 @@ async def _handle_owner_message(owner_phone: str, text: str, name: str) -> dict:
 
         await send_text(
             owner_phone,
-            f"✅ आप {cust_name or pending} से जुड़ गए हैं। अब जो भी लिखेंगे, सीधे ग्राहक को जाएगा।\n"
-            "चैट खत्म करने के लिए \"बंद\" लिखें।",
+            f"✅ आप *{cust_name or pending}* से जुड़ गए हैं। अब जो भी लिखेंगे, सीधे ग्राहक को जाएगा।\n\n"
+            f"{owner_end_chat_hint()}",
         )
         await send_text(pending, owner_connected_msg(cust_lang))
         # Forward this first message too

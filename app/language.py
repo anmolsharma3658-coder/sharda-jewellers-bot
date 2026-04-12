@@ -92,44 +92,90 @@ def t(lang: str, hi: str, en: str) -> str:
 def welcome_msg(name: str, lang: str) -> str:
     if lang == "en":
         return (
-            f"🙏 {'Welcome ' + name + '!' if name else 'Welcome!'}\n\n"
-            "Welcome to Sharda Jewellers, Bemetara.\n"
-            "Your family jeweller since 1971.\n\n"
-            "Choose below or ask anything:"
+            f"✨ {'Welcome, ' + name + '!' if name else 'Welcome!'}\n\n"
+            "So glad you messaged *Sharda Jewellers* — Bemetara's family jeweller since *1971*.\n"
+            "We're here to help with rates, designs, custom orders, or just a friendly chat about jewellery 💎\n\n"
+            "Tap a button below or type what you need — we're listening!"
+        )
+    if lang == "hinglish":
+        return (
+            f"✨ {'Hi ' + name + '!' if name else 'Hi!'} Sharda Jewellers mein aapka swagat hai 🙏\n\n"
+            "Bemetara ke family jeweller — *1971 se* yahin hain. Gold, silver, diamond, custom design — "
+            "jo bhi dil mein ho, poochh lo! 💎\n\n"
+            "Neeche button dabao ya seedha likho — hum taiyaar hain!"
         )
     return (
-        f"🙏 {'नमस्ते ' + name + ' जी!' if name else 'नमस्ते!'}\n\n"
-        "शारदा ज्वेलर्स, बेमेतरा में आपका स्वागत है।\n"
-        "सन् 1971 से आपके परिवार के ज्वेलर।\n\n"
-        "नीचे से चुनें या कुछ भी पूछें:"
+        f"✨ {'नमस्ते ' + name + ' जी!' if name else 'नमस्ते!'}\n\n"
+        "शारदा ज्वेलर्स में आपका दिल से स्वागत है 🙏\n"
+        "बेमेतरा के परिवारिक ज्वेलर — *सन् 1971* से आपके साथ। सोना, चाँदी, हीरा, कस्टम डिज़ाइन — "
+        "जो चाहें, पूछिए! 💎\n\n"
+        "नीचे बटन चुनें या सीधे लिखें — हम सुन रहे हैं!"
     )
 
 
 def photo_greeting(name: str, lang: str) -> str:
     if lang == "en":
-        return f"📸 {'Hi ' + name + '!' if name else 'Hi!'} Sending some photos of our jewellery:"
-    return f"📸 {'जी ' + name + ' जी!' if name else 'जी!'} हमारे कुछ गहनों की तस्वीरें भेज रहे हैं:"
+        return (
+            f"📸 {'Lovely to hear from you, ' + name + '!' if name else 'Great choice!'}\n"
+            "Here are some glimpses from our collection — the real magic is even better in store ✨"
+        )
+    if lang == "hinglish":
+        return (
+            f"📸 {'Ji ' + name + '!' if name else 'Ji!'} Collection ki jhalak bhej rahe hain — "
+            "asli nazara to dukaan par aur bhi khoobsurat hai ✨"
+        )
+    return (
+        f"📸 {'जी ' + name + ' जी!' if name else 'बहुत खूब!'}\n"
+        "कलेक्शन की एक झलक — असली नज़ारा तो दुकान पर और भी खूबसूरत है ✨"
+    )
 
 
 def no_photos_msg(lang: str) -> str:
     if lang == "en":
-        return "Sorry, photos are not available right now. Please visit our store to see our collection."
-    return "क्षमा करें, अभी फोटो उपलब्ध नहीं हैं। कृपया दुकान पर आकर हमारा कलेक्शन देखें।"
+        return (
+            "Photos aren't loading just now — technology being a little shy 😅\n"
+            "Do visit us in Bemetara; nothing beats seeing the pieces in person!"
+        )
+    if lang == "hinglish":
+        return (
+            "Abhi photos load nahi ho paayi — thodi technical museebat 😅\n"
+            "Bemetara dukaan par aa jao, live dekhna alag hi baat hai!"
+        )
+    return (
+        "अभी फोटो लोड नहीं हो पाई — थोड़ी तकनीकी मुसीबत 😅\n"
+        "बेमेतरा दुकान पर आइए, सामने देखने का मज़ा ही अलग है!"
+    )
 
 
 def owner_connected_msg(lang: str) -> str:
     if lang == "en":
-        return "✅ The owner has joined! You can now chat directly."
-    return "✅ मालिक जी जुड़ गए हैं! अब आप सीधे बात कर सकते हैं।"
+        return (
+            "✅ *You're now chatting with the store team* — your messages go straight to them.\n"
+            "Take your time. When they're done, our assistant will be right here again 💬"
+        )
+    if lang == "hinglish":
+        return (
+            "✅ *Ab aap seedhe store team se baat kar rahe ho* — message unhi tak jayega.\n"
+            "Aaram se baat karo. Baad mein humara assistant phir yahin milega 💬"
+        )
+    return (
+        "✅ *अब आप सीधे दुकान की टीम से जुड़ गए हैं* — आपका संदेश उन तक जाएगा।\n"
+        "आराम से बात कीजिए। बाद में हमारा सहायक फिर यहीं मिलेगा 💬"
+    )
 
 
 def session_ended_msg(lang: str) -> str:
     if lang == "en":
         return (
-            "🙏 The owner has ended the conversation.\n"
-            "You can now chat with the bot. Ask anything or type \"menu\"!"
+            "🙏 *That was the live chat with our team.*\n"
+            "You're back with me — ask for *rates*, *photos*, *collections*, or type *menu* anytime. Happy to help! ✨"
+        )
+    if lang == "hinglish":
+        return (
+            "🙏 *Live chat yahi par khatam — team se baat ho gayi.*\n"
+            "Ab main phir se yahin hoon — *rate*, *photo*, *collection* ya *menu* likho, khushi se madad karunga! ✨"
         )
     return (
-        "🙏 मालिक जी ने बातचीत समाप्त की।\n"
-        "अब आप बॉट से बात कर सकते हैं। कुछ भी पूछें या \"menu\" लिखें!"
+        "🙏 *लाइव चैट यहीं समाप्त — टीम से बात हो गई।*\n"
+        "अब मैं फिर यहीं हूँ — *भाव*, *फोटो*, *कलेक्शन* या *menu* लिखिए, खुशी से मदद करूँगा! ✨"
     )

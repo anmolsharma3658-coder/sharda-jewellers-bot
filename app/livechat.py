@@ -110,14 +110,79 @@ def end_session_for_owner(owner_phone: str) -> str | None:
     return customer_phone
 
 
-END_KEYWORDS = frozenset({
-    "close", "end", "done", "stop", "exit",
-    "बंद", "समाप्त", "खत्म", "ok done", "band",
+# Owner-only: end live relay. Exact one-line commands + phrases (English / Hindi / Hinglish).
+_END_EXACT = frozenset({
+    "close", "end", "stop", "exit", "quit", "done", "bye", "cya", "tc",
+    "band", "khatam", "bas", "over", "finish", "finished", "end.", "close.",
+    "बंद", "खत्म", "समाप्त", "बस", "हो गया", "ok", "okay", "👍", "✅",
+    "end chat", "close chat", "stop chat", "quit chat", "chat end", "chat close",
+    "end session", "close session", "stop session", "end live", "close live",
+    "live end", "live close", "disconnect", "release", "terminate",
+    "back to bot", "bot mode", "relay off", "stop relay", "no relay",
+    "im done", "i'm done", "i am done", "we are done", "we're done",
+    "customer done", "all done", "thats all", "that's all", "signing off",
+    "chat band", "live band", "band karo", "khatam karo", "close karo",
+    "chat khatam", "live chat band", "ab band", "yahi tak", "yahi tk",
+    "ho gaya", "hogaya", "ho gya", "ok done", "ok close", "ok end",
+    "please end", "please close", "please stop", "pls end", "plz end",
+    "end now", "close now", "stop now", "bye bye", "byee",
+    "चैट बंद", "लाइव बंद", "बात खत्म", "समाप्त करें", "यहीं तक", "हो गया",
 })
+
+# Substring phrases (normalized message must be short enough to avoid false positives)
+_END_PHRASES = (
+    "end the chat", "close the chat", "end this chat", "close this chat",
+    "stop talking to customer", "release the customer", "end customer chat",
+    "disconnect customer", "finish with customer", "done with customer",
+    "customer released", "go back to bot", "switch to bot",
+    "लाइव चैट बंद", "ग्राहक से बात खत्म", "चैट समाप्त",
+)
 
 
 def is_end_command(text: str) -> bool:
-    return text.strip().lower() in END_KEYWORDS
+    """True if the owner wants to close the live relay (many EN/HI/Hinglish shortcuts)."""
+    raw = (text or "").strip()
+    if not raw:
+        return False
+
+    low = raw.lower()
+    # Collapse whitespace / common trailing punctuation
+    compact = re.sub(r"[\s!?.।,，]+", " ", low).strip().rstrip("?!.")
+    if compact in _END_EXACT:
+        return True
+
+    # Hindi / mixed script: check original lower only for ascii parts; Devanagari phrases in raw
+    if "चैट बंद" in raw or "लाइव बंद" in raw or "बात खत्म" in raw:
+        if len(raw) < 120:
+            return True
+
+    # Phrase match on shorter owner pings (avoid "end" inside unrelated long text)
+    if len(raw) <= 140:
+        for phrase in _END_PHRASES:
+            if phrase in low or phrase in raw:
+                return True
+
+    # Single-token boundary: "end" but not "weekend"
+    tokens = re.findall(r"[a-z]+", low)
+    if len(tokens) == 1 and tokens[0] in ("end", "close", "stop", "done", "quit", "exit", "bye"):
+        return True
+    if len(tokens) == 2 and tokens[0] in ("ok", "okay", "pls", "please") and tokens[1] in (
+        "end", "close", "stop", "done", "bye",
+    ):
+        return True
+
+    return False
+
+
+def owner_end_chat_hint() -> str:
+    """Shown to owners when live chat starts (WhatsApp)."""
+    return (
+        "🔚 *चैट बंद करने के लिए* — कोई भी एक लिखें:\n"
+        "• English: *end*, *close*, *done*, *stop*, *bye*, *end chat*, *close session*\n"
+        "• Hinglish: *chat band*, *live band*, *khatam*, *bas*, *ho gaya*\n"
+        "• हिंदी: *बंद*, *खत्म*, *समाप्त*, *चैट बंद*\n"
+        "• Emoji: 👍 ✅ (अकेले मैसेज में)"
+    )
 
 
 def _norm(s: str) -> str:
