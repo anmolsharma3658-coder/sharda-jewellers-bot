@@ -6,6 +6,7 @@ from google import genai
 from google.genai import types
 from app.config import GEMINI_API_KEY
 from app.gold_rates import get_rates, format_rates_message
+from app.customers import get_customer
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,11 @@ Google: https://business.google.com/n/5073554692225386022/searchprofile?hl=en
 9. emoji कम और सार्थक इस्तेमाल करो — अतिरंजित मत करो।
 10. अगर कोई complaint हो तो सहानुभूति दिखाओ और दुकान पर आने या कॉल करने को कहो।
 11. अगर ग्राहक नंबर, फ़ोन, contact, "call karna hai", "number do" पूछे → सीधे दोनों नंबर बताओ: +91 94255 61850 और +91 70003 44110
+12. हर ग्राहक के साथ उसका context (संदेश संख्या, टैग, नोट) आता है। इसका उपयोग करो:
+    - अगर msg_count > 1 है तो वो पुराना ग्राहक है — "फिर से स्वागत है!" जैसा कहो
+    - अगर टैग "vip" है तो विशेष ध्यान दो
+    - अगर टैग "bride" है तो ब्राइडल कलेक्शन के बारे में बताओ
+    - नोट में कोई जानकारी हो तो उसका संदर्भ लो
 
 ═══════════════════════════════════════
 विशेष कमांड (SPECIAL INTENTS)
@@ -135,7 +141,19 @@ async def generate_reply(phone: str, user_text: str, user_name: str = "") -> tup
     """
     history = _get_history(phone)
 
-    name_context = f" (ग्राहक का नाम: {user_name})" if user_name else ""
+    customer = get_customer(phone)
+    context_parts = []
+    if user_name:
+        context_parts.append(f"ग्राहक का नाम: {user_name}")
+    if customer:
+        context_parts.append(f"कुल संदेश: {customer['msg_count']}")
+        if customer["msg_count"] > 1:
+            context_parts.append(f"पहली बार: {customer['first_seen'][:10]}")
+        if customer.get("tags"):
+            context_parts.append(f"टैग: {customer['tags']}")
+        if customer.get("notes"):
+            context_parts.append(f"नोट: {customer['notes']}")
+    name_context = f" ({', '.join(context_parts)})" if context_parts else ""
     full_input = f"{user_text}{name_context}"
 
     history.append(types.Content(role="user", parts=[types.Part(text=full_input)]))

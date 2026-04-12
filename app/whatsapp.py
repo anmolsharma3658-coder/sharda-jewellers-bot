@@ -140,6 +140,29 @@ async def send_image(to: str, image_url: str, caption: str = "") -> bool:
         return True
 
 
+async def send_template(to: str, template_name: str, language: str = "hi") -> bool:
+    """Send a pre-approved WhatsApp template message (for broadcast outside 24hr window)."""
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    data = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "template",
+        "template": {
+            "name": template_name,
+            "language": {"code": language},
+        },
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(WHATSAPP_API_URL, headers=headers, json=data)
+        if resp.status_code != 200:
+            logger.error("WhatsApp template send failed: %s %s", resp.status_code, resp.text)
+            return False
+        return True
+
+
 async def mark_read(msg_id: str) -> None:
     """Mark a message as read (blue ticks)."""
     headers = {

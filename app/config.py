@@ -13,4 +13,6 @@ GOOGLE_PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "")
 
 OWNER_PHONES = ["919425561850", "917000344110"]
 
+ADMIN_KEY = os.getenv("ADMIN_KEY", "sharda-admin-2024")
+
 WHATSAPP_API_URL = f"https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"
