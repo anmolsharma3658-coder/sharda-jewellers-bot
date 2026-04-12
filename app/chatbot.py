@@ -25,6 +25,7 @@ SYSTEM_PROMPT = """
 नाम: शारदा ज्वेलर्स (Sharda Jewellers)
 स्थापना: सन् 1971
 स्थान: बेमेतरा, छत्तीसगढ़, भारत
+फ़ोन: +91 94255 61850, +91 70003 44110
 Google: https://business.google.com/n/5073554692225386022/searchprofile?hl=en
 
 विरासत: "सन् 1971 से, जब इस इलाके में गहनों की कोई दुकान तक नहीं थी — हम थे।
@@ -75,6 +76,7 @@ Google: https://business.google.com/n/5073554692225386022/searchprofile?hl=en
 8. अगर ग्राहक का नाम मिले, तो उसे नाम से संबोधित करो।
 9. emoji कम और सार्थक इस्तेमाल करो — अतिरंजित मत करो।
 10. अगर कोई complaint हो तो सहानुभूति दिखाओ और दुकान पर आने या कॉल करने को कहो।
+11. अगर ग्राहक नंबर, फ़ोन, contact, "call karna hai", "number do" पूछे → सीधे दोनों नंबर बताओ: +91 94255 61850 और +91 70003 44110
 
 ═══════════════════════════════════════
 विशेष कमांड (SPECIAL INTENTS)
@@ -96,6 +98,16 @@ Google: https://business.google.com/n/5073554692225386022/searchprofile?hl=en
   → जवाब की शुरुआत में EXACTLY यह लिखो: [PHOTOS_REQUEST]
   → फिर एक छोटा वाक्य जैसे "जी बिल्कुल! हमारे कुछ गहनों की तस्वीरें भेज रहे हैं:"
 
+• जब ग्राहक इनमें से कुछ कहे:
+  - मालिक से बात करनी है, owner से बात करो, "insaan se baat karo"
+  - ऑर्डर करना है, खरीदना है, बुक करना, "I want to buy", "order place karna hai"
+  - शिकायत / complaint / "mera order kharab hai" / "problem hai"
+  - कोई ऐसी बात जो तुम्हारे ज्ञान से बाहर हो या जिसमें तुम confident नहीं हो
+  - negotiation / price discussion / "kitne mein doge" / "discount"
+  → जवाब की शुरुआत में EXACTLY यह लिखो: [CONNECT_OWNER]
+  → फिर एक गर्मजोशी भरा वाक्य जैसे "जी बिल्कुल, मैं आपको हमारे मालिक जी से जोड़ रहा हूँ। वे जल्द ही आपसे बात करेंगे।"
+  → ग्राहक की बात का सारांश भी लिख दो ताकि मालिक को context मिले।
+
 बाकी सभी सवालों का जवाब अपनी बुद्धिमानी से दो, ऊपर दी गई जानकारी के आधार पर।
 """
 
@@ -116,10 +128,10 @@ def _trim_history(phone: str) -> None:
         _conversations[phone] = hist[-MAX_HISTORY:]
 
 
-async def generate_reply(phone: str, user_text: str, user_name: str = "") -> tuple[str, bool]:
+async def generate_reply(phone: str, user_text: str, user_name: str = "") -> tuple[str, bool, bool]:
     """Generate a chatbot reply for the given user message.
 
-    Returns (reply_text, wants_photos).
+    Returns (reply_text, wants_photos, wants_owner).
     """
     history = _get_history(phone)
 
@@ -155,7 +167,7 @@ async def generate_reply(phone: str, user_text: str, user_name: str = "") -> tup
     if reply_text is None:
         reply_text = "क्षमा करें, अभी हमारे सिस्टम में कुछ समस्या है। कृपया कुछ देर बाद कोशिश करें या दुकान पर कॉल करें।"
         history.append(types.Content(role="model", parts=[types.Part(text=reply_text)]))
-        return reply_text, False
+        return reply_text, False, False
 
     if "[RATES_REQUEST]" in reply_text:
         rates = await get_rates()
@@ -170,10 +182,14 @@ async def generate_reply(phone: str, user_text: str, user_name: str = "") -> tup
     if _has_photos:
         reply_text = reply_text.replace("[PHOTOS_REQUEST]", "").strip()
 
+    _wants_owner = "[CONNECT_OWNER]" in reply_text
+    if _wants_owner:
+        reply_text = reply_text.replace("[CONNECT_OWNER]", "").strip()
+
     history.append(types.Content(role="model", parts=[types.Part(text=reply_text)]))
     _trim_history(phone)
 
-    return reply_text, _has_photos
+    return reply_text, _has_photos, _wants_owner
 
 
 def is_menu_request(reply: str) -> bool:

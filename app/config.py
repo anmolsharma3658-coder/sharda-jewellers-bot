@@ -11,4 +11,6 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GOLD_API_KEY = os.getenv("GOLD_API_KEY", "")
 GOOGLE_PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "")
 
+OWNER_PHONES = ["919425561850", "917000344110"]
+
 WHATSAPP_API_URL = f"https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"

@@ -3,7 +3,7 @@
 import logging
 from fastapi import FastAPI, Request, Query, Response
 from fastapi.responses import HTMLResponse
-from app.config import WHATSAPP_VERIFY_TOKEN
+from app.config import WHATSAPP_VERIFY_TOKEN, OWNER_PHONES
 from app.whatsapp import extract_message, send_text, send_image, send_interactive_buttons, mark_read
 from app.chatbot import generate_reply
 from app.google_photos import get_store_photos
@@ -92,8 +92,8 @@ async def health():
 @app.get("/test")
 async def test_chat(msg: str = Query("नमस्ते")):
     """Debug endpoint to test bot replies directly."""
-    reply, wants_photos = await generate_reply("test_user", msg, "TestUser")
-    return {"input": msg, "reply": reply, "wants_photos": wants_photos}
+    reply, wants_photos, wants_owner = await generate_reply("test_user", msg, "TestUser")
+    return {"input": msg, "reply": reply, "wants_photos": wants_photos, "wants_owner": wants_owner}
 
 
 @app.get("/webhook")
@@ -147,7 +147,7 @@ async def receive_message(request: Request):
     if text.lower() in ("btn_rates", "bhav", "भाव", "rate", "rates", "gold rate",
                          "sone ka bhav", "सोने का भाव", "chandi ka bhav",
                          "चाँदी का भाव", "aaj ka bhav", "आज के भाव"):
-        reply, _ = await generate_reply(phone, "आज के सोने चाँदी के भाव बताओ", name)
+        reply, _, _ = await generate_reply(phone, "आज के सोने चाँदी के भाव बताओ", name)
         await send_text(phone, reply)
         return {"status": "rates_sent"}
 
@@ -157,20 +157,22 @@ async def receive_message(request: Request):
 
     if text.lower() in ("btn_products", "products", "गहने", "jewellery", "jewelry",
                          "collection", "हमारे गहने"):
-        reply, _ = await generate_reply(phone, "आपके यहाँ कौन-कौन से गहने मिलते हैं?", name)
+        reply, _, _ = await generate_reply(phone, "आपके यहाँ कौन-कौन से गहने मिलते हैं?", name)
         await send_text(phone, reply)
         return {"status": "products_sent"}
 
     if text.lower() in ("btn_custom", "custom", "कस्टम", "custom order",
                          "कस्टम ऑर्डर", "apna design"):
-        reply, _ = await generate_reply(phone, "कस्टम ऑर्डर कैसे करें?", name)
+        reply, _, _ = await generate_reply(phone, "कस्टम ऑर्डर कैसे करें?", name)
         await send_text(phone, reply)
         return {"status": "custom_sent"}
 
-    reply, wants_photos = await generate_reply(phone, text, name)
+    reply, wants_photos, wants_owner = await generate_reply(phone, text, name)
     await send_text(phone, reply)
     if wants_photos:
         await _send_photos(phone)
+    if wants_owner:
+        await _notify_owners(phone, name, text)
     return {"status": "replied"}
 
 
@@ -191,3 +193,33 @@ async def _handle_photos(phone: str, name: str) -> dict:
     await send_text(phone, greeting)
     await _send_photos(phone)
     return {"status": "photos_sent"}
+
+
+async def _notify_owners(customer_phone: str, customer_name: str, customer_msg: str) -> None:
+    """Forward customer message to both owners with chat context."""
+    from app.chatbot import _get_history
+    history = _get_history(customer_phone)
+
+    chat_summary_lines = []
+    for entry in history[-10:]:
+        role = "ग्राहक" if entry.role == "user" else "Bot"
+        text = entry.parts[0].text if entry.parts else ""
+        if len(text) > 200:
+            text = text[:200] + "..."
+        chat_summary_lines.append(f"  {role}: {text}")
+    chat_summary = "\n".join(chat_summary_lines)
+
+    owner_msg = (
+        f"🔔 *नया ग्राहक संपर्क*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 नाम: {customer_name or 'अज्ञात'}\n"
+        f"📱 नंबर: wa.me/{customer_phone}\n"
+        f"💬 संदेश: {customer_msg}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📋 *बातचीत का सारांश:*\n{chat_summary}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"कृपया ग्राहक से संपर्क करें।"
+    )
+
+    for owner_phone in OWNER_PHONES:
+        await send_text(owner_phone, owner_msg)
