@@ -1,65 +1,57 @@
-"""Fetch and cache live gold/silver rates in INR from GoldPricez API."""
+"""Fetch and cache live gold/silver rates in INR from Gold-API.com (no key needed)."""
 
 import time
 import logging
 import httpx
-from app.config import GOLD_API_KEY
 
 logger = logging.getLogger(__name__)
 
 CACHE_TTL_SECONDS = 30 * 60  # 30 minutes
+TROY_OZ_TO_GRAM = 31.1035
 
 _cache: dict = {
     "data": None,
     "fetched_at": 0.0,
 }
 
-GOLDPRICEZ_URL = "https://goldpricez.com/api/rates/currency/inr/measure/gram"
+GOLD_URL = "https://api.gold-api.com/price/XAU/INR"
+SILVER_URL = "https://api.gold-api.com/price/XAG/INR"
 
 
-async def _fetch_from_api() -> dict | None:
-    """Call GoldPricez API and return parsed rate data."""
-    if not GOLD_API_KEY:
-        logger.warning("GOLD_API_KEY not set, returning fallback rates")
-        return None
-
-    headers = {"Authorization": f"Bearer {GOLD_API_KEY}"}
+async def _fetch_price(url: str) -> float | None:
+    """Fetch a single metal price from Gold-API.com."""
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(GOLDPRICEZ_URL, headers=headers)
+            resp = await client.get(url)
             if resp.status_code == 200:
-                return resp.json()
-            logger.error("GoldPricez API returned %s: %s", resp.status_code, resp.text)
+                data = resp.json()
+                return float(data.get("price", 0))
+            logger.error("Gold-API returned %s: %s", resp.status_code, resp.text)
     except Exception:
-        logger.error("GoldPricez API call failed", exc_info=True)
+        logger.error("Gold-API call failed for %s", url, exc_info=True)
     return None
 
 
-def _parse_rates(raw: dict) -> dict:
-    """Extract gold and silver per-gram prices from API response."""
-    try:
-        gold_per_gram = float(raw.get("price_gram_24k", 0))
-        silver_per_gram = float(raw.get("price_gram_silver", 0))
+def _build_rates(gold_per_oz: float, silver_per_oz: float) -> dict:
+    """Convert per-troy-ounce prices to per-gram and per-10g."""
+    gold_per_gram = gold_per_oz / TROY_OZ_TO_GRAM
+    silver_per_gram = silver_per_oz / TROY_OZ_TO_GRAM
 
-        return {
-            "gold_24k_per_gram": round(gold_per_gram, 2),
-            "gold_24k_per_10gram": round(gold_per_gram * 10, 2),
-            "gold_22k_per_gram": round(gold_per_gram * 22 / 24, 2),
-            "gold_22k_per_10gram": round(gold_per_gram * 22 / 24 * 10, 2),
-            "gold_18k_per_gram": round(gold_per_gram * 18 / 24, 2),
-            "gold_18k_per_10gram": round(gold_per_gram * 18 / 24 * 10, 2),
-            "silver_per_gram": round(silver_per_gram, 2),
-            "silver_per_kg": round(silver_per_gram * 1000, 2),
-            "source": "GoldPricez (International)",
-            "note": "ये अंतरराष्ट्रीय भाव हैं। स्थानीय भाव में मामूली फ़र्क हो सकता है।",
-        }
-    except (ValueError, TypeError):
-        logger.error("Failed to parse rate data", exc_info=True)
-        return _fallback_rates()
+    return {
+        "gold_24k_per_gram": round(gold_per_gram, 2),
+        "gold_24k_per_10gram": round(gold_per_gram * 10, 2),
+        "gold_22k_per_gram": round(gold_per_gram * 22 / 24, 2),
+        "gold_22k_per_10gram": round(gold_per_gram * 22 / 24 * 10, 2),
+        "gold_18k_per_gram": round(gold_per_gram * 18 / 24, 2),
+        "gold_18k_per_10gram": round(gold_per_gram * 18 / 24 * 10, 2),
+        "silver_per_gram": round(silver_per_gram, 2),
+        "silver_per_kg": round(silver_per_gram * 1000, 2),
+        "source": "Gold-API.com (International Spot)",
+        "note": "ये अंतरराष्ट्रीय स्पॉट भाव हैं। स्थानीय भाव में मेकिंग चार्ज और GST अलग से लगेगा।",
+    }
 
 
 def _fallback_rates() -> dict:
-    """Provide a helpful message when live rates are unavailable."""
     return {
         "gold_24k_per_gram": 0,
         "gold_24k_per_10gram": 0,
@@ -80,9 +72,11 @@ async def get_rates() -> dict:
     if _cache["data"] and (now - _cache["fetched_at"]) < CACHE_TTL_SECONDS:
         return _cache["data"]
 
-    raw = await _fetch_from_api()
-    if raw:
-        parsed = _parse_rates(raw)
+    gold_price = await _fetch_price(GOLD_URL)
+    silver_price = await _fetch_price(SILVER_URL)
+
+    if gold_price and silver_price:
+        parsed = _build_rates(gold_price, silver_price)
         _cache["data"] = parsed
         _cache["fetched_at"] = now
         return parsed
