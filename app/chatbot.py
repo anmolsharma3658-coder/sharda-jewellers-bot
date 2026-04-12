@@ -9,6 +9,7 @@ from app.config import GEMINI_API_KEY
 from app.gold_rates import get_rates, format_rates_message
 from app.customers import get_customer
 from app.language import detect_language
+from app.livechat import owner_escalation_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -115,15 +116,17 @@ Google: https://business.google.com/n/5073554692225386022/searchprofile?hl=en
   → जवाब की शुरुआत में EXACTLY यह लिखो: [PHOTOS_REQUEST]
   → फिर एक छोटा वाक्य जैसे "जी बिल्कुल! हमारे कुछ गहनों की तस्वीरें भेज रहे हैं:"
 
-• जब ग्राहक इनमें से कुछ कहे:
-  - मालिक से बात करनी है, owner से बात करो, "insaan se baat karo"
-  - ऑर्डर करना है, खरीदना है, बुक करना, "I want to buy", "order place karna hai"
-  - शिकायत / complaint / "mera order kharab hai" / "problem hai"
-  - कोई ऐसी बात जो तुम्हारे ज्ञान से बाहर हो या जिसमें तुम confident नहीं हो
-  - negotiation / price discussion / "kitne mein doge" / "discount"
-  → जवाब की शुरुआत में EXACTLY यह लिखो: [CONNECT_OWNER]
-  → फिर कहो: "जी बिल्कुल, मैं आपको हमारे मालिक जी से सीधे जोड़ रहा हूँ। अब आपकी बात सीधे मालिक जी तक पहुँचेगी। कृपया थोड़ा इंतज़ार करें।"
-  → ग्राहक को बताओ कि उनके अगले मैसेज सीधे मालिक को जाएंगे।
+• [CONNECT_OWNER] — बहुत दुर्लभ, सिर्फ़ जब ग्राहक साफ़ तौर पर यह चाहे:
+  - मालिक / ओनर / owner / manager / इंसान से सीधे बात (जैसे "मालिक से बात करानी है", "owner se baat", "speak to the owner", "human agent")
+  - खरीद के बाद गंभीर शिकायत — गलत माल, refund, धोखा, पुलिस/कोर्ट जैसी बात + ऑर्डर/गहना/बिल का ज़िक्र
+  → तभी जवाब की शुरुआत में EXACTLY: [CONNECT_OWNER]
+  → फिर एक छोटा वाक्य: मालिक जी से लाइव चैट जोड़ रहे हैं, अगला मैसेज उन तक जाएगा।
+
+• [CONNECT_OWNER] कभी मत लिखो अगर ग्राहक सिर्फ़ ये पूछ रहा हो:
+  - भाव, फोटो, कलेक्शन, कस्टम ऑर्डर, डिज़ाइन, पता, टाइमिंग
+  - खरीद में दिलचस्पी, "मुझे नेकलेस चाहिए", "order karna hai", बुक करना, विज़िट करना
+  - कीमत, डिस्काउंट, "kitne ka", मोल-भाव — इनका जवाब तुम दो: आज के भाव + दुकान पर फाइनल रेट + फोन नंबर
+  - कोई सामान्य सवाल जिसका जवाब तुम दे सको — पहले तुम ही जवाब दो
 
 बाकी सभी सवालों का जवाब अपनी बुद्धिमानी से दो, ऊपर दी गई जानकारी के आधार पर।
 
@@ -135,6 +138,28 @@ CRITICAL OUTPUT RULES
 - Your reply must be ONLY the customer-facing WhatsApp text (plus optional [RATES_REQUEST] etc. prefixes where rules say so).
 - Follow reply_language from the internal block at the bottom of these instructions — never mention it to the user.
 """
+
+# If model outputs [CONNECT_OWNER] but the user's text does not qualify, we replace the reply (see generate_reply).
+_HANDOFF_BLOCKED = {
+    "en": (
+        "I'm here to help with rates, photos, collections, and custom orders in this chat.\n\n"
+        "📞 Sharda Jewellers, Bemetara: +91 94255 61850, +91 70003 44110\n\n"
+        "We only open a *live chat to the owner* when you clearly ask to *speak to the owner* "
+        "or you have a serious issue *after a purchase*. What would you like to know?"
+    ),
+    "hinglish": (
+        "Main yahin se rates, photos, collection aur custom order mein help kar sakta hoon.\n\n"
+        "📞 Sharda Jewellers, Bemetara: +91 94255 61850, +91 70003 44110\n\n"
+        "Owner se live chat tabhi khulta hai jab aap clearly likho *malik/owner se baat* "
+        "ya serious complaint ho *piece khareedne ke baad*. Ab batao kya chahiye?"
+    ),
+    "hi": (
+        "मैं यहीं से भाव, फोटो, कलेक्शन और कस्टम ऑर्डर में मदद कर सकता हूँ।\n\n"
+        "📞 शारदा ज्वेलर्स, बेमेतरा: +91 94255 61850, +91 70003 44110\n\n"
+        "मालिक जी से *लाइव चैट* सिर्फ़ तभी खुलती है जब आप साफ़ लिखें *मालिक से बात* "
+        "या *खरीद के बाद* गंभीर शिकायत हो। अभी क्या जानना चाहेंगे?"
+    ),
+}
 
 _conversations: dict[str, list[types.Content]] = {}
 
@@ -261,9 +286,15 @@ async def generate_reply(phone: str, user_text: str, user_name: str = "") -> tup
     if _has_photos:
         reply_text = reply_text.replace("[PHOTOS_REQUEST]", "").strip()
 
-    _wants_owner = "[CONNECT_OWNER]" in reply_text
-    if _wants_owner:
+    raw_wants_owner = "[CONNECT_OWNER]" in reply_text
+    if raw_wants_owner:
         reply_text = reply_text.replace("[CONNECT_OWNER]", "").strip()
+
+    allowed_owner = owner_escalation_allowed(user_text)
+    _wants_owner = raw_wants_owner and allowed_owner
+    if raw_wants_owner and not allowed_owner:
+        logger.info("Owner handoff blocked (not explicit): %s", user_text[:120])
+        reply_text = _HANDOFF_BLOCKED.get(lang, _HANDOFF_BLOCKED["hi"])
 
     reply_text = _sanitize_reply(reply_text)
 

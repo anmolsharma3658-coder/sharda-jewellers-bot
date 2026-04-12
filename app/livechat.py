@@ -8,6 +8,7 @@ Flow:
   5. Sessions auto-expire after 2 hours of inactivity
 """
 
+import re
 import time
 import logging
 
@@ -117,3 +118,115 @@ END_KEYWORDS = frozenset({
 
 def is_end_command(text: str) -> bool:
     return text.strip().lower() in END_KEYWORDS
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
+# Only these patterns may start a live owner relay (stops AI from paging owners for every prompt).
+_OWNER_INTENT_ROMAN = (
+    "malik se baat",
+    "malik se bat",
+    "owner se baat",
+    "owner se bat",
+    "baat karao malik",
+    "baat karao owner",
+    "mujhe malik",
+    "mujhe owner",
+    "malik ko bula",
+    "owner ko bula",
+    "insaan se baat",
+    "human se baat",
+    "real person",
+    "bande se baat",
+    "manager se baat",
+    "speak to the owner",
+    "talk to the owner",
+    "talk with the owner",
+    "connect me to owner",
+    "connect me to the owner",
+    "need the owner",
+    "human agent",
+    "customer care executive",
+)
+
+_OWNER_INTENT_DEVANAGARI = (
+    "मालिक से बात",
+    "मालिक से मिल",
+    "मालिक को बुल",
+    "ओनर से बात",
+    "मालिक जी से बात",
+    "इंसान से बात",
+    "व्यक्ति से बात",
+)
+
+_COMPLAINT_MARKERS_ROMAN = (
+    "complaint",
+    "refund",
+    "defective",
+    "duplicate piece",
+    "fraud",
+    "police",
+    "court",
+    "consumer court",
+    "cheat",
+    "scam",
+)
+
+_COMPLAINT_MARKERS_HI = (
+    "शिकायत",
+    "पैसा वापस",
+    "गलत सामान",
+    "ठग",
+)
+
+_ORDER_CONTEXT = (
+    "order",
+    "खरीद",
+    "खरीदा",
+    "purchase",
+    "गहना",
+    "jewel",
+    "piece",
+    "item",
+    "डिलीवर",
+    "deliver",
+    "payment",
+    "पेमेंट",
+    "bill",
+    "रसीद",
+    "invoice",
+)
+
+
+def owner_escalation_allowed(customer_message: str) -> bool:
+    """True only when the customer clearly wants the owner or a serious purchase dispute.
+
+    The bot must handle rates, photos, collections, custom orders, and general questions alone.
+    """
+    raw = (customer_message or "").strip()
+    if not raw:
+        return False
+
+    low = _norm(raw)
+
+    for phrase in _OWNER_INTENT_ROMAN:
+        if phrase in low:
+            return True
+
+    for phrase in _OWNER_INTENT_DEVANAGARI:
+        if phrase in raw:
+            return True
+
+    complaint = any(m in low for m in _COMPLAINT_MARKERS_ROMAN) or any(
+        m in raw for m in _COMPLAINT_MARKERS_HI
+    )
+    if complaint:
+        order_ctx = any(c in low for c in _ORDER_CONTEXT) or any(
+            c in raw for c in ("गहना", "ऑर्डर", "खरीद", "बिल", "रसीद")
+        )
+        if order_ctx:
+            return True
+
+    return False
