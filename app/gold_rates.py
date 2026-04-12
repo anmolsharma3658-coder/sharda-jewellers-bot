@@ -108,13 +108,57 @@ async def get_rates() -> dict:
     return _fallback_rates()
 
 
-def format_rates_message(rates: dict) -> str:
-    """Format rates into a beautiful Hindi message."""
+def format_rates_message(rates: dict, lang: str = "hi") -> str:
+    """Format rates for WhatsApp. lang: hi | en | hinglish."""
     if rates["source"] == "unavailable":
+        if lang == "en":
+            return (
+                "🪙 *Today's rates*\n\n"
+                "⚠️ Live rates are not available right now.\n"
+                "Please contact Sharda Jewellers, Bemetara.\n"
+            )
+        if lang == "hinglish":
+            return (
+                "🪙 *Aaj ke bhav*\n\n"
+                "⚠️ Live rates abhi available nahi hain.\n"
+                "Please call / visit: Sharda Jewellers, Bemetara.\n"
+            )
         return (
             "🪙 *आज के भाव*\n\n"
             "⚠️ लाइव भाव अभी उपलब्ध नहीं हैं।\n"
             "कृपया दुकान पर संपर्क करें: शारदा ज्वेलर्स, बेमेतरा\n"
+        )
+
+    if lang == "en":
+        return (
+            "🪙 *Gold & Silver rates (India, today)*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "✨ *Gold*\n"
+            f"  24K (999):  ₹{rates['gold_24k_per_gram']:,.0f}/gram  |  ₹{rates['gold_24k_per_10gram']:,.0f}/10 g\n"
+            f"  22K (916):  ₹{rates['gold_22k_per_gram']:,.0f}/gram  |  ₹{rates['gold_22k_per_10gram']:,.0f}/10 g\n"
+            f"  18K (750):  ₹{rates['gold_18k_per_gram']:,.0f}/gram  |  ₹{rates['gold_18k_per_10gram']:,.0f}/10 g\n\n"
+            "🤍 *Silver*\n"
+            f"  999:  ₹{rates['silver_per_gram']:,.0f}/gram  |  ₹{rates['silver_per_kg']:,.0f}/kg\n\n"
+            f"📋 *Taxes included:* Import duty {rates['import_duty_pct']:.0f}% + GST {rates['gst_pct']:.0f}%. "
+            "Making charges are extra.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "💎 Sharda Jewellers, Bemetara — Est. 1971"
+        )
+
+    if lang == "hinglish":
+        return (
+            "🪙 *Aaj ke gold & silver rates (India)*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "✨ *Gold*\n"
+            f"  24K (999):  ₹{rates['gold_24k_per_gram']:,.0f}/gram  |  ₹{rates['gold_24k_per_10gram']:,.0f}/10 gram\n"
+            f"  22K (916):  ₹{rates['gold_22k_per_gram']:,.0f}/gram  |  ₹{rates['gold_22k_per_10gram']:,.0f}/10 gram\n"
+            f"  18K (750):  ₹{rates['gold_18k_per_gram']:,.0f}/gram  |  ₹{rates['gold_18k_per_10gram']:,.0f}/10 gram\n\n"
+            "🤍 *Silver*\n"
+            f"  999:  ₹{rates['silver_per_gram']:,.0f}/gram  |  ₹{rates['silver_per_kg']:,.0f}/kg\n\n"
+            f"📋 Import duty {rates['import_duty_pct']:.0f}% + GST {rates['gst_pct']:.0f}% included. "
+            "Making charge alag.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "💎 Sharda Jewellers, Bemetara — 1971 se"
         )
 
     return (

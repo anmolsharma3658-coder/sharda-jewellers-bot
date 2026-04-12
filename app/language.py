@@ -20,7 +20,26 @@ _HINGLISH_MARKERS = frozenset({
     "suno", "dekho", "chalo", "aao", "jao", "ruko", "pehle",
     "baad", "paisa", "rupay", "sona", "chandi", "heera",
     "gehna", "gahna", "shaadi", "dulhan", "mangalsutr",
+    "bhav", "aaj", "dikhao", "batao", "malik", "dunga", "doge",
+    "milta", "milega", "lena", "khareedna", "order", "bhejna",
 })
+
+# Roman-script English cues (avoid classifying clear English as hinglish)
+_ENGLISH_MARKERS = frozenset({
+    "the", "and", "for", "you", "your", "what", "how", "when", "where", "why",
+    "please", "thank", "thanks", "hello", "hey", "good", "morning", "evening",
+    "today", "latest", "gold", "silver", "rate", "rates", "price", "prices",
+    "show", "send", "want", "need", "can", "could", "would", "should", "tell",
+    "give", "about", "from", "with", "this", "that", "have", "has", "any",
+    "some", "more", "here", "there", "buy", "purchase", "order", "contact",
+    "call", "number", "photo", "photos", "picture", "collection", "jewellery",
+    "jewelry", "store", "shop",     "certainly", "are", "these", "those",
+})
+
+
+def _tokenize(text: str) -> set[str]:
+    raw = re.sub(r"[^\w\s]", " ", text.lower())
+    return {w for w in raw.split() if len(w) > 1}
 
 
 def detect_language(text: str) -> str:
@@ -28,6 +47,10 @@ def detect_language(text: str) -> str:
 
     Returns "hi" (Hindi), "en" (English), or "hinglish".
     """
+    stripped = text.strip()
+    if not stripped:
+        return "hi"
+
     devanagari_count = len(_DEVANAGARI.findall(text))
     latin_count = len(_LATIN_ALPHA.findall(text))
     total = devanagari_count + latin_count
@@ -35,11 +58,22 @@ def detect_language(text: str) -> str:
     if total == 0:
         return "hi"
 
-    if devanagari_count / total > 0.3:
+    if devanagari_count / total > 0.25:
         return "hi"
 
-    words = set(text.lower().split())
+    words = _tokenize(text)
+    if not words:
+        return "hi"
+
     hinglish_hits = words & _HINGLISH_MARKERS
+    english_hits = words & _ENGLISH_MARKERS
+
+    # Clear English (e.g. "gold and silver rates today please")
+    if english_hits and len(english_hits) >= len(hinglish_hits) + 1:
+        return "en"
+    if english_hits and len(english_hits) >= 2 and not hinglish_hits:
+        return "en"
+
     if hinglish_hits:
         return "hinglish"
 
