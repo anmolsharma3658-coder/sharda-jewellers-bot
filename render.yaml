@@ -5,6 +5,8 @@ services:
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # Helps Render mark the service healthy; open /health/whatsapp-config to verify env.
+    healthCheckPath: /health
     envVars:
       - key: WHATSAPP_TOKEN
         sync: false
@@ -13,6 +15,10 @@ services:
       - key: WHATSAPP_VERIFY_TOKEN
         sync: false
       - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_IMAGEN_MODEL
+        sync: false
+      - key: AI_IMAGE_GENERATION
         sync: false
       - key: GOLD_API_KEY
         sync: false

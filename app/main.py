@@ -2,14 +2,22 @@
 
 import asyncio
 import logging
-from fastapi import FastAPI, Request, Query, Response, Header, UploadFile, File
+from fastapi import FastAPI, Request, Query, Response, Header, UploadFile, File, BackgroundTasks
 from fastapi.responses import HTMLResponse, PlainTextResponse
-from app.config import WHATSAPP_VERIFY_TOKEN, OWNER_PHONES, ADMIN_KEY
+from app.config import WHATSAPP_VERIFY_TOKEN, OWNER_PHONES, ADMIN_KEY, AI_IMAGE_GENERATION_ENABLED
 from app.whatsapp import (
-    extract_message, send_text, send_image, send_template,
-    send_interactive_buttons, mark_read,
+    extract_inbound,
+    send_text,
+    send_image,
+    send_template,
+    send_interactive_buttons,
+    mark_read,
+    relay_wa_media_to_recipient,
+    relay_wa_media_to_many,
+    upload_wa_media,
+    send_image_by_media_id,
 )
-from app.chatbot import generate_reply
+from app.chatbot import generate_reply, is_customer_inspiration_reference_message
 from app.google_photos import get_store_photos
 from app.livechat import (
     start_session, customer_in_session, owner_has_session,
@@ -22,8 +30,23 @@ from app.customers import (
     export_csv, import_csv, get_broadcast_targets,
 )
 from app.language import (
-    detect_language, welcome_msg, photo_greeting, no_photos_msg,
-    owner_connected_msg, session_ended_msg,
+    detect_language,
+    welcome_msg,
+    photo_greeting,
+    no_photos_msg,
+    owner_connected_msg,
+    session_ended_msg,
+    custom_inspiration_ack,
+    ai_visual_caption,
+    ai_visual_failed_msg,
+    ai_visual_disabled_msg,
+    ai_visual_queued_msg,
+)
+from app.custom_orders import (
+    create_custom_order,
+    list_custom_orders,
+    update_order_status,
+    count_new_orders,
 )
 
 logging.basicConfig(
@@ -110,8 +133,17 @@ async def health():
 @app.get("/test")
 async def test_chat(msg: str = Query("नमस्ते")):
     """Debug endpoint to test bot replies directly."""
-    reply, wants_photos, wants_owner = await generate_reply("test_user", msg, "TestUser")
-    return {"input": msg, "reply": reply, "wants_photos": wants_photos, "wants_owner": wants_owner}
+    reply, wants_photos, wants_owner, wants_ai, ai_prompt = await generate_reply(
+        "test_user", msg, "TestUser"
+    )
+    return {
+        "input": msg,
+        "reply": reply,
+        "wants_photos": wants_photos,
+        "wants_owner": wants_owner,
+        "wants_ai_image": wants_ai,
+        "ai_imagen_prompt_en": ai_prompt,
+    }
 
 
 @app.get("/webhook")
@@ -129,10 +161,14 @@ async def verify_webhook(
 
 
 @app.post("/webhook")
-async def receive_message(request: Request):
-    """Handle incoming WhatsApp messages."""
+async def receive_message(request: Request, background_tasks: BackgroundTasks):
+    """Handle incoming WhatsApp messages.
+
+    Image handling runs in a background task so we respond to Meta within a few
+    seconds; download + re-upload can exceed WhatsApp's webhook timeout otherwise.
+    """
     payload = await request.json()
-    msg = extract_message(payload)
+    msg = extract_inbound(payload)
 
     if not msg:
         return {"status": "no_message"}
@@ -145,9 +181,22 @@ async def receive_message(request: Request):
         _processed_messages.clear()
 
     phone = msg["from"]
-    text = msg["text"].strip()
     name = msg["name"]
 
+    if msg["kind"] == "image":
+        logger.info("Image from %s (%s) media_id=%s", name or "unknown", phone, msg["media_id"])
+        if phone in OWNER_PHONES and (owner_has_session(phone) or find_pending_session()):
+            background_tasks.add_task(_run_owner_image_pipeline, phone, msg, name)
+            return {"status": "accepted"}
+        if customer_in_session(phone):
+            background_tasks.add_task(_run_live_customer_image_pipeline, phone, msg, name)
+            return {"status": "accepted"}
+        lang = _lang_for_image_message(phone, msg.get("caption", ""))
+        upsert_customer(phone, name, language=lang)
+        background_tasks.add_task(_run_custom_order_image_pipeline, phone, name, msg, lang)
+        return {"status": "accepted"}
+
+    text = msg["text"].strip()
     logger.info("Message from %s (%s): %s", name or "unknown", phone, text[:100])
     await mark_read(msg_id)
 
@@ -167,36 +216,300 @@ async def receive_message(request: Request):
         await send_interactive_buttons(phone, welcome_msg(name, lang), MENU_BUTTONS)
         return {"status": "menu_sent"}
 
+    # Direct Imagen trigger (no reliance on Gemini emitting [AI_IMAGE_REQUEST]).
+    # Examples: "ai image: gold temple jhumka" / "ai visual: 22k choker with pearls"
+    _raw = text.strip()
+    _low = _raw.lower()
+    if _low.startswith("ai image:") or _low.startswith("ai visual:"):
+        _suffix = _raw.split(":", 1)[1].strip() if ":" in _raw else ""
+        await send_text(phone, ai_visual_queued_msg(lang))
+        if AI_IMAGE_GENERATION_ENABLED:
+            background_tasks.add_task(
+                _run_ai_visual_pipeline,
+                phone,
+                lang,
+                _suffix or None,
+                text,
+            )
+        else:
+            await send_text(phone, ai_visual_disabled_msg(lang))
+        return {"status": "ai_visual_queued"}
+
     if text.lower() in ("btn_rates", "bhav", "भाव", "rate", "rates", "gold rate",
                          "sone ka bhav", "सोने का भाव", "chandi ka bhav",
                          "चाँदी का भाव", "aaj ka bhav", "आज के भाव"):
-        reply, _, _ = await generate_reply(phone, "आज के सोने चाँदी के भाव बताओ", name)
+        reply, _, _, _, _ = await generate_reply(phone, "आज के सोने चाँदी के भाव बताओ", name)
         await send_text(phone, reply)
         return {"status": "rates_sent"}
 
-    if text.lower() in ("btn_photos", "photo", "photos", "फोटो", "तस्वीर",
-                         "gallery", "दिखाओ", "pictures", "फोटो देखें"):
+    if text.lower() in (
+        "btn_photos",
+        "photo",
+        "photos",
+        "फोटो",
+        "तस्वीर",
+        "gallery",
+        "दिखाओ",
+        "pictures",
+        "फोटो देखें",
+    ) and not is_customer_inspiration_reference_message(text):
         return await _handle_photos(phone, name, lang)
 
     if text.lower() in ("btn_products", "products", "गहने", "jewellery", "jewelry",
                          "collection", "हमारे गहने"):
-        reply, _, _ = await generate_reply(phone, "आपके यहाँ कौन-कौन से गहने मिलते हैं?", name)
+        reply, _, _, _, _ = await generate_reply(phone, "आपके यहाँ कौन-कौन से गहने मिलते हैं?", name)
         await send_text(phone, reply)
         return {"status": "products_sent"}
 
     if text.lower() in ("btn_custom", "custom", "कस्टम", "custom order",
                          "कस्टम ऑर्डर", "apna design"):
-        reply, _, _ = await generate_reply(phone, "कस्टम ऑर्डर कैसे करें?", name)
+        reply, _, _, _, _ = await generate_reply(phone, "कस्टम ऑर्डर कैसे करें?", name)
         await send_text(phone, reply)
         return {"status": "custom_sent"}
 
-    reply, wants_photos, wants_owner = await generate_reply(phone, text, name)
+    reply, wants_photos, wants_owner, wants_ai_image, ai_imagen_prompt_en = await generate_reply(
+        phone, text, name
+    )
     await send_text(phone, reply)
     if wants_photos:
         await _send_photos(phone, lang=lang)
     if wants_owner:
         await _start_live_chat(phone, name, text, lang)
+    if wants_ai_image:
+        if AI_IMAGE_GENERATION_ENABLED:
+            background_tasks.add_task(
+                _run_ai_visual_pipeline,
+                phone,
+                lang,
+                ai_imagen_prompt_en,
+                text,
+            )
+        else:
+            await send_text(phone, ai_visual_disabled_msg(lang))
     return {"status": "replied"}
+
+
+@app.on_event("startup")
+async def _log_whatsapp_config():
+    from app.config import WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_TOKEN
+
+    if not WHATSAPP_PHONE_NUMBER_ID:
+        logger.error("WHATSAPP_PHONE_NUMBER_ID is missing — Graph message/media URLs will be invalid.")
+    if not WHATSAPP_TOKEN:
+        logger.error("WHATSAPP_TOKEN is missing — WhatsApp API will fail.")
+
+
+@app.get("/health/whatsapp-config")
+async def health_whatsapp_config():
+    """Sanity check env (no secrets). Safe to open in browser while debugging deploy."""
+    from app.config import (
+        WHATSAPP_PHONE_NUMBER_ID,
+        WHATSAPP_TOKEN,
+        AI_IMAGE_GENERATION_ENABLED,
+        GEMINI_IMAGEN_MODEL,
+    )
+
+    return {
+        "phone_number_id_configured": bool(str(WHATSAPP_PHONE_NUMBER_ID or "").strip()),
+        "access_token_configured": bool(str(WHATSAPP_TOKEN or "").strip()),
+        "ai_image_generation_enabled": AI_IMAGE_GENERATION_ENABLED,
+        "gemini_imagen_model": GEMINI_IMAGEN_MODEL or None,
+    }
+
+
+async def _run_custom_order_image_pipeline(phone: str, name: str, msg: dict, lang: str) -> None:
+    await mark_read(msg["msg_id"])
+    try:
+        await _log_and_notify_custom_order(phone, name, msg, lang)
+    except Exception:
+        logger.exception("Custom order image pipeline failed for %s", phone)
+        await send_text(
+            phone,
+            "क्षमा करें — फोटो प्रोसेस नहीं हो सका। कृपया दोबारा भेजें या विवरण टेक्स्ट में लिख दें।",
+        )
+
+
+async def _run_owner_image_pipeline(owner_phone: str, msg: dict, name: str) -> None:
+    await mark_read(msg["msg_id"])
+    try:
+        await _handle_owner_image(owner_phone, msg, name)
+    except Exception:
+        logger.exception("Owner image relay failed for %s", owner_phone)
+
+
+async def _run_live_customer_image_pipeline(customer_phone: str, msg: dict, name: str) -> None:
+    await mark_read(msg["msg_id"])
+    try:
+        await _handle_live_customer_image(customer_phone, msg, name)
+    except Exception:
+        logger.exception("Live customer image relay failed for %s", customer_phone)
+
+
+async def _run_ai_visual_pipeline(
+    phone: str,
+    lang: str,
+    imagen_prompt_en: str | None,
+    user_text: str,
+) -> None:
+    """Imagen generation + WhatsApp image send (runs after webhook responded)."""
+    from app.ai_images import generate_jewellery_image_bytes, extract_imagen_prompt_from_user_text
+
+    logger.info(
+        "AI visual pipeline start phone=%s prompt_snippet=%s",
+        phone,
+        (imagen_prompt_en or user_text or "")[:80],
+    )
+    try:
+        p = (imagen_prompt_en or "").strip()
+        if not p:
+            p = await extract_imagen_prompt_from_user_text(user_text)
+        if not p:
+            await send_text(phone, ai_visual_failed_msg(lang))
+            return
+        data = await generate_jewellery_image_bytes(p)
+        if not data:
+            await send_text(phone, ai_visual_failed_msg(lang))
+            return
+        mid = await upload_wa_media(data, "image/jpeg")
+        if not mid:
+            await send_text(phone, ai_visual_failed_msg(lang))
+            return
+        cap = ai_visual_caption(lang)[:1020]
+        if not await send_image_by_media_id(phone, mid, caption=cap):
+            await send_text(phone, ai_visual_failed_msg(lang))
+        else:
+            logger.info("AI visual pipeline OK phone=%s bytes=%s", phone, len(data))
+    except Exception:
+        logger.exception("AI visual pipeline failed for %s", phone)
+        try:
+            await send_text(phone, ai_visual_failed_msg(lang))
+        except Exception:
+            pass
+
+
+def _format_chat_snippet(phone: str, max_turns: int = 8) -> str:
+    from app.chatbot import _get_history
+
+    history = _get_history(phone)
+    lines: list[str] = []
+    for entry in history[-max_turns:]:
+        role = "ग्राहक" if entry.role == "user" else "Bot"
+        txt = ""
+        if entry.parts:
+            txt = (entry.parts[0].text or "").strip()
+        if not txt:
+            continue
+        if len(txt) > 200:
+            txt = txt[:200] + "..."
+        lines.append(f"  {role}: {txt}")
+    return "\n".join(lines)
+
+
+def _lang_for_image_message(phone: str, caption: str) -> str:
+    cust = get_customer(phone)
+    if cust and cust.get("language"):
+        return cust["language"]
+    if caption.strip():
+        return detect_language(caption)
+    return "hi"
+
+
+async def _log_and_notify_custom_order(phone: str, name: str, msg: dict, lang: str) -> None:
+    snippet = _format_chat_snippet(phone)
+    caption = msg.get("caption", "") or ""
+    oid = create_custom_order(
+        phone=phone,
+        name=name,
+        wa_message_id=msg["msg_id"],
+        media_id=msg["media_id"],
+        mime_type=msg.get("mime_type"),
+        caption=caption,
+        chat_snippet=snippet,
+    )
+    cap_short = caption[:400] if caption else f"Order #{oid}"
+    owner_text = (
+        f"🖼️ *कस्टम / रेफरेंस फोटो* — ऑर्डर #{oid}\n"
+        f"👤 {name or 'अज्ञात'} — https://wa.me/{phone}\n"
+    )
+    if caption:
+        owner_text += f"📝 कैप्शन: {caption}\n"
+    owner_text += "━━━━━━━━━━━━━━━━━━━━\n"
+    owner_text += f"📋 *चैट संदर्भ:*\n{snippet or '  (कोई हाल की टेक्स्ट चैट नहीं)'}\n"
+    owner_text += "━━━━━━━━━━━━━━━━━━━━"
+    for op in OWNER_PHONES:
+        await send_text(op, owner_text)
+    ok = await relay_wa_media_to_many(msg["media_id"], list(OWNER_PHONES), caption=cap_short)
+    if not ok:
+        for op in OWNER_PHONES:
+            await send_text(
+                op,
+                f"⚠️ ऑर्डर #{oid}: फोटो व्हाट्सऐप पर नहीं चढ़ सका। मीडिया आईडी: {msg['media_id']}",
+            )
+    await send_text(phone, custom_inspiration_ack(lang))
+
+
+async def _handle_owner_image(owner_phone: str, msg: dict, name: str) -> dict:
+    media_id = msg["media_id"]
+    caption = msg.get("caption", "") or ""
+
+    linked_customer = owner_has_session(owner_phone)
+    if linked_customer:
+        touch(linked_customer)
+        ok = await relay_wa_media_to_recipient(media_id, linked_customer, caption=caption)
+        if not ok:
+            await send_text(
+                linked_customer,
+                "📷 शारदा ज्वेलर्स ने फोटो भेजी, लेकिन डिलीवर नहीं हो सकी — कृपया दुबारा मंगवाएँ।",
+            )
+        return {"status": "owner_image_to_customer"}
+
+    pending = find_pending_session()
+    if pending:
+        link_owner(owner_phone, pending)
+        from app.livechat import get_session
+
+        session = get_session(pending)
+        cust_name = session["customer_name"] if session else ""
+        cust = get_customer(pending)
+        cust_lang = cust.get("language", "hi") if cust else "hi"
+        await send_text(
+            owner_phone,
+            f"✅ आप *{cust_name or pending}* से जुड़ गए हैं। अब जो भी भेजेंगे, ग्राहक तक जाएगा।\n\n"
+            f"{owner_end_chat_hint()}",
+        )
+        await send_text(pending, owner_connected_msg(cust_lang))
+        ok = await relay_wa_media_to_recipient(media_id, pending, caption=caption)
+        if not ok:
+            await send_text(pending, "📷 शारदा ज्वेलर्स की फोटो लोड नहीं हो सकी — कृपया दुबारा कहें।")
+        return {"status": "owner_linked_image"}
+
+    return {"status": "owner_no_action"}
+
+
+async def _handle_live_customer_image(customer_phone: str, msg: dict, name: str) -> dict:
+    from app.livechat import get_session
+
+    touch(customer_phone)
+    session = get_session(customer_phone)
+    if not session:
+        return {"status": "session_expired"}
+
+    media_id = msg["media_id"]
+    caption = msg.get("caption", "") or ""
+    cust_label = name or customer_phone
+    header = f"👤 *{cust_label}* (फोटो भेजा"
+    if caption:
+        header += f" — {caption[:120]}"
+    header += ")"
+    owner_phone = session.get("owner_phone")
+    targets = [owner_phone] if owner_phone else list(OWNER_PHONES)
+    for op in targets:
+        await send_text(op, header)
+    ok = await relay_wa_media_to_many(media_id, targets, caption=caption[:800] if caption else "")
+    if not ok:
+        for op in targets:
+            await send_text(op, "⚠️ ग्राहक की फोटो रिले विफल — दुबारा मंगवाएँ।")
+    return {"status": "relayed_customer_image"}
 
 
 # ═══════════════════════════════════════════════════════════
@@ -482,6 +795,37 @@ async def admin_stats(x_admin_key: str | None = Header(None)):
     """Quick dashboard stats."""
     if not _check_admin(x_admin_key):
         return Response(content="Unauthorized", status_code=401)
-    return {"total_customers": get_customer_count()}
+    return {
+        "total_customers": get_customer_count(),
+        "custom_orders_new": count_new_orders(),
+    }
+
+
+@app.get("/admin/custom-orders")
+async def admin_custom_orders(
+    status: str | None = Query(None, description="Filter by status e.g. new, done"),
+    limit: int = Query(100, ge=1, le=500),
+    x_admin_key: str | None = Header(None),
+):
+    if not _check_admin(x_admin_key):
+        return Response(content="Unauthorized", status_code=401)
+    return {"orders": list_custom_orders(limit=limit, status=status)}
+
+
+@app.patch("/admin/custom-orders/{order_id}")
+async def admin_update_custom_order(
+    order_id: int,
+    request: Request,
+    x_admin_key: str | None = Header(None),
+):
+    if not _check_admin(x_admin_key):
+        return Response(content="Unauthorized", status_code=401)
+    body = await request.json()
+    new_status = (body.get("status") or "").strip()
+    if not new_status:
+        return Response(content="JSON body must include 'status'", status_code=400)
+    if not update_order_status(order_id, new_status):
+        return Response(content="Order not found", status_code=404)
+    return {"ok": True, "id": order_id, "status": new_status}
 
 

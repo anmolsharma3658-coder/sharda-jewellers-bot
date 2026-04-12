@@ -164,6 +164,85 @@ def owner_connected_msg(lang: str) -> str:
     )
 
 
+def ai_visual_caption(lang: str) -> str:
+    """Caption on WhatsApp for AI-generated inspiration image."""
+    if lang == "en":
+        return (
+            "✨ AI inspiration only — not our real stock. Final design & gold work happen at "
+            "Sharda Jewellers, Bemetara. Google Imagen / SynthID watermark may apply."
+        )
+    if lang == "hinglish":
+        return (
+            "✨ Ye AI inspiration hai — asli piece dukaan par banega. Final design Sharda Jewellers "
+            "Bemetara par. (Imagen / SynthID watermark ho sakta hai.)"
+        )
+    return (
+        "✨ यह AI से बनी *प्रेरणा* है — असली गहना दुकान पर तय होगा। "
+        "फाइनल डिज़ाइन शारदा ज्वेलर्स, बेमेतरा। (Imagen / SynthID वॉटरमार्क हो सकता है।)"
+    )
+
+
+def ai_visual_queued_msg(lang: str) -> str:
+    """Right after user triggers AI image — set expectation (takes a short while)."""
+    if lang == "en":
+        return "✨ Working on an AI inspiration image for you — please wait a few seconds…"
+    if lang == "hinglish":
+        return "✨ AI inspiration image bana rahe hain — thoda wait karo, kuch seconds…"
+    return "✨ AI प्रेरणा चित्र तैयार कर रहे हैं — कृपया कुछ सेकंड प्रतीक्षा करें…"
+
+
+def ai_visual_disabled_msg(lang: str) -> str:
+    if lang == "en":
+        return (
+            "AI image previews are switched off on this server. "
+            "You can send a reference photo or visit Sharda Jewellers in Bemetara."
+        )
+    if lang == "hinglish":
+        return (
+            "AI image preview abhi server par band hai. Reference photo bhejo ya Bemetara dukaan par aao."
+        )
+    return (
+        "AI चित्र सुविधा इस सर्वर पर बंद है। रेफरेंस फोटो भेजें या बेमेतरा दुकान पर आएँ।"
+    )
+
+
+def ai_visual_failed_msg(lang: str) -> str:
+    if lang == "en":
+        return (
+            "Sorry — I couldn't generate that preview just now (limits or safety filter). "
+            "Try a simpler jewellery description, send a reference photo, or visit us in Bemetara."
+        )
+    if lang == "hinglish":
+        return (
+            "Sorry — abhi AI preview nahi ban paya (limit ya filter). Thoda simple description try karo, "
+            "ya reference photo bhejo, ya Bemetara dukaan par aao."
+        )
+    return (
+        "क्षमा करें — अभी AI प्रीव्यू नहीं बन पाया (सीमा या सुरक्षा फ़िल्टर)। "
+        "थोड़ा सरल विवरण लिखें, रेफरेंस फोटो भेजें, या बेमेतरा दुकान पर आएँ।"
+    )
+
+
+def custom_inspiration_ack(lang: str) -> str:
+    """After customer sends a design reference / inspiration photo."""
+    if lang == "en":
+        return (
+            "📷 *We received your reference photo.*\n"
+            "Our team will review it and get back to you on WhatsApp. "
+            "If you have more details (metal, budget, occasion), send them as a message too ✨"
+        )
+    if lang == "hinglish":
+        return (
+            "📷 *Aapka reference photo mil gaya.*\n"
+            "Team dekh kar WhatsApp par jawab degi. Agar metal, budget, occasion jaise detail ho to "
+            "message mein likh bhej dena ✨"
+        )
+    return (
+        "📷 *आपका रेफरेंस फोटो मिल गया।*\n"
+        "हमारी टीम इसे देखकर WhatsApp पर जवाब देगी। धातु, बजट, मौका जैसी जानकारी हो तो संदेश में लिख भेजिए ✨"
+    )
+
+
 def session_ended_msg(lang: str) -> str:
     if lang == "en":
         return (

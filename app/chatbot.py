@@ -71,6 +71,7 @@ Google: https://business.google.com/n/5073554692225386022/searchprofile?hl=en
 • पुराने गहनों की एक्सचेंज / बदलाई
 • गहनों की मरम्मत और पॉलिश
 • कस्टम ऑर्डर — अपना डिज़ाइन लाएं, हम बनाएंगे
+• ग्राहक *फोटो* भेजकर डिज़ाइन / प्रेरणा दिखा सकते हैं — बॉट पुष्टि देता है और टीम को भेज देता है
 • शादी के लिए विशेष ब्राइडल कलेक्शन
 • गिफ्टिंग के लिए चाँदी के आइटम
 
@@ -107,6 +108,14 @@ Google: https://business.google.com/n/5073554692225386022/searchprofile?hl=en
 विशेष कमांड (SPECIAL INTENTS)
 ═══════════════════════════════════════
 
+⚠️ पहले यह ज़रूर पढ़ो — [PHOTOS_REQUEST] गलत मत लगाना:
+• ग्राहक अपनी *प्रेरणा / रेफरेंस / आइडिया / स्केच / "ऐसा चाहिए"* की बात करे, या *खुद फोटो भेजने* की बात करे
+  (inspiration, reference, my design, idea, sending photo, photo bhej raha, screenshot, Pinterest, Instagram se)
+  → **[PHOTOS_REQUEST] बिल्कुल नहीं** — यह दुकान की Google गैलरी नहीं खोलता।
+  → बताओ: इसी WhatsApp चैट में *फोटो या दस्तावेज़ भेज दें* (कैप्शन लिख सकते हैं); टीम लॉग कर लेगी। टेक्स्ट से विवरण भी चलेगा।
+• [PHOTOS_REQUEST] *सिर्फ़* जब वे साफ़ *आपकी दुकान / शोरूम / कलेक्शन की असली तस्वीरें* देखना चाहें
+  (आपके पास क्या डिज़ाइन हैं, दुकान दिखाओ, collection photos, store gallery, नमूने दिखाओ हमारे)।
+
 अगर ग्राहक इनमें से कुछ पूछे, तो तुम्हें FUNCTION_CALL prefix के साथ जवाब देना है:
 
 • "भाव", "rate", "price", "सोने का भाव", "gold rate", "चाँदी का भाव", "silver rate", "aaj ka bhav"
@@ -117,11 +126,21 @@ Google: https://business.google.com/n/5073554692225386022/searchprofile?hl=en
   → जवाब की शुरुआत में EXACTLY यह लिखो: [MENU_REQUEST]
   → फिर स्वागत संदेश
 
-• "photo", "फोटो", "तस्वीर", "picture", "image", "दिखाओ", "collection dikhao",
+• दुकान की कलेक्शन / शोरूम फोटो (ऊपर "अपनी प्रेरणा" वाला केस नहीं):
+  "photo", "फोटो", "तस्वीर", "picture", "image", "दिखाओ", "collection dikhao",
   "गहने दिखाओ", "show me", "photos bhejo", "gallery", "designs dikhao",
-  "कुछ दिखाओ", "नमूने दिखाओ", "sample"
+  "कुछ दिखाओ", "नमूने दिखाओ", "sample" — *केवल जब संदर्भ साफ़ हो कि वे हमारे स्टोर के फोटो चाहते हैं*
   → जवाब की शुरुआत में EXACTLY यह लिखो: [PHOTOS_REQUEST]
   → फिर एक छोटा वाक्य जैसे "जी बिल्कुल! हमारे कुछ गहनों की तस्वीरें भेज रहे हैं:"
+
+• AI से *नया* गहनों का चित्र (दुकान की असली फोटो नहीं) — जब ग्राहक साफ़ मांगे:
+  - जैसे: generate / AI image / visualize / mockup / picture bana do / design kaise dikhega / sketch banao
+  - और साथ में गहने का विवरण हो
+  → पहले EXACTLY: [AI_IMAGE_REQUEST]
+  → फिर EXACTLY: [AI_IMAGE_PROMPT] ... [/AI_IMAGE_PROMPT] — बीच में केवल English, सिर्फ़ गहना (product photo), 400 अक्षर से कम; कोई इंसान/चेहरा/हाथ नहीं
+  → फिर reply_language में छोटा संदेश: ये *AI प्रेरणा* है, असली काम दुकान पर
+• [AI_IMAGE_REQUEST] मत लिखो अगर वे सिर्फ़ दुकान की *असली* तस्वीरें चाहें — उस पर [PHOTOS_REQUEST]
+• हर बार AI चित्र मत चालू करो — सिर्फ़ जब ग्राहक स्पष्ट रूप से चित्र बनवाना चाहे
 
 • [CONNECT_OWNER] — बहुत दुर्लभ, सिर्फ़ जब ग्राहक साफ़ तौर पर यह चाहे:
   - मालिक / ओनर / owner / manager / इंसान से सीधे बात (जैसे "मालिक से बात करानी है", "owner se baat", "speak to the owner", "human agent")
@@ -142,7 +161,7 @@ CRITICAL OUTPUT RULES
 ═══════════════════════════════════════
 - User messages are ONLY what the customer typed. There is NO [CONTEXT] line in their text.
 - NEVER output [CONTEXT], "भाषा=", "reply_language", "Customer name:", message counts, dates, tags, or ANY internal/session metadata.
-- Your reply must be ONLY the customer-facing WhatsApp text (plus optional [RATES_REQUEST] etc. prefixes where rules say so).
+- Your reply must be ONLY the customer-facing WhatsApp text (plus optional [RATES_REQUEST], [AI_IMAGE_REQUEST], [AI_IMAGE_PROMPT]… tags where rules say so — server strips tags).
 - Follow reply_language from the internal block at the bottom of these instructions — never mention it to the user.
 """
 
@@ -178,6 +197,55 @@ _META_LINE = re.compile(
     r"^\s*(भाषा|reply_language|language)\s*[=:]\s*\S+.*$",
     re.IGNORECASE | re.MULTILINE,
 )
+_AI_IMAGE_PROMPT_BLOCK = re.compile(
+    r"\[AI_IMAGE_PROMPT\]\s*(.*?)\s*\[/AI_IMAGE_PROMPT\]",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def is_customer_inspiration_reference_message(text: str) -> bool:
+    """True when the customer is sharing / offering THEIR reference or idea — not asking for our store gallery."""
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    t = raw.lower()
+
+    if "inspiration" in t or "inspire" in t:
+        return True
+    if "प्रेरणा" in raw or "प्रेरण" in raw:
+        return True
+    if re.search(r"\breference\b", t) and re.search(
+        r"\b(design|jewelry|jewellery|necklace|ring|bangle|earring|photo|pic|image|piece|"
+        r"jhumka|mangalsutra|choker|set|gold|silver|custom|order)\b",
+        t,
+    ):
+        return True
+    if re.search(r"\b(my|our|own|apna|apni|mera|meri|humara)\s+(design|idea|photo|picture|image|sketch)\b", t):
+        return True
+    if re.search(r"\b(custom|कस्टम)\s+(order|piece|design)\b", t) and re.search(
+        r"\b(photo|image|picture|pic|फोटो|reference|like|similar|sketch)\b", t
+    ):
+        return True
+    if re.search(
+        r"\b(i\s*'?m sending|i am sending|i\s*'?ve sent|i sent|here('?s| is)|"
+        r"bhej\s*(raha|rahi|rha|rhi|diya|di|rahe|unga|ungi|dunga|dungi)|maine\s*bhej|mene\s*bhej|"
+        r"upload(ed|ing)?|sending you|aapko bhej|aapke liye bhej)\b",
+        t,
+    ) and re.search(r"\b(photo|image|picture|pic|फोटो|screenshot)\b", t):
+        return True
+    if re.search(r"\b(share|shared)\b", t) and re.search(r"\b(my|mera|meri|apna|apni|our)\b", t) and re.search(
+        r"\b(photo|image|picture|pic|फोटो)\b", t
+    ):
+        return True
+    if re.search(
+        r"\b(like this|something like|similar to|aise|is tarah|jaisa|jesaa|"
+        r"इस तरह|ऐसा ही|same as)\b",
+        t,
+    ):
+        return True
+    if re.search(r"\b(pinterest|instagram|screenshot|screen shot|idea hai|have an idea)\b", t):
+        return True
+    return False
 
 
 def _sanitize_reply(text: str) -> str:
@@ -233,10 +301,10 @@ def _trim_history(phone: str) -> None:
         _conversations[phone] = hist[-MAX_HISTORY:]
 
 
-async def generate_reply(phone: str, user_text: str, user_name: str = "") -> tuple[str, bool, bool]:
+async def generate_reply(phone: str, user_text: str, user_name: str = "") -> tuple[str, bool, bool, bool, str | None]:
     """Generate a chatbot reply for the given user message.
 
-    Returns (reply_text, wants_photos, wants_owner).
+    Returns (reply_text, wants_photos, wants_owner, wants_ai_image, ai_imagen_prompt_en).
     """
     history = _get_history(phone)
 
@@ -278,7 +346,18 @@ async def generate_reply(phone: str, user_text: str, user_name: str = "") -> tup
     if reply_text is None:
         reply_text = "क्षमा करें, अभी हमारे सिस्टम में कुछ समस्या है। कृपया कुछ देर बाद कोशिश करें या दुकान पर कॉल करें।"
         history.append(types.Content(role="model", parts=[types.Part(text=reply_text)]))
-        return reply_text, False, False
+        return reply_text, False, False, False, None
+
+    ai_imagen_prompt_en: str | None = None
+    m_ai = _AI_IMAGE_PROMPT_BLOCK.search(reply_text)
+    if m_ai:
+        ai_imagen_prompt_en = (m_ai.group(1) or "").strip()
+        reply_text = reply_text[: m_ai.start()] + reply_text[m_ai.end() :]
+        reply_text = re.sub(r"\n{3,}", "\n\n", reply_text).strip()
+
+    _wants_ai_image = "[AI_IMAGE_REQUEST]" in reply_text
+    if _wants_ai_image:
+        reply_text = reply_text.replace("[AI_IMAGE_REQUEST]", "").strip()
 
     if "[RATES_REQUEST]" in reply_text:
         rates = await get_rates()
@@ -291,6 +370,13 @@ async def generate_reply(phone: str, user_text: str, user_name: str = "") -> tup
 
     _has_photos = "[PHOTOS_REQUEST]" in reply_text
     if _has_photos:
+        reply_text = reply_text.replace("[PHOTOS_REQUEST]", "").strip()
+    if _wants_ai_image:
+        _has_photos = False
+    if is_customer_inspiration_reference_message(user_text):
+        if _has_photos:
+            logger.info("Suppressed store [PHOTOS_REQUEST] — inspiration/reference customer message")
+        _has_photos = False
         reply_text = reply_text.replace("[PHOTOS_REQUEST]", "").strip()
 
     raw_wants_owner = "[CONNECT_OWNER]" in reply_text
@@ -308,7 +394,7 @@ async def generate_reply(phone: str, user_text: str, user_name: str = "") -> tup
     history.append(types.Content(role="model", parts=[types.Part(text=reply_text)]))
     _trim_history(phone)
 
-    return reply_text, _has_photos, _wants_owner
+    return reply_text, _has_photos, _wants_owner, _wants_ai_image, ai_imagen_prompt_en
 
 
 def is_menu_request(reply: str) -> bool:
