@@ -21,6 +21,10 @@ from app.customers import (
     search_customers, update_tags, update_notes, delete_customer,
     export_csv, import_csv, get_broadcast_targets,
 )
+from app.language import (
+    detect_language, welcome_msg, photo_greeting, no_photos_msg,
+    owner_connected_msg, session_ended_msg,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -155,17 +159,12 @@ async def receive_message(request: Request):
     if customer_in_session(phone):
         return await _handle_live_customer_message(phone, text, name)
 
-    # ── Normal customer flow ──
-    upsert_customer(phone, name)
+    # ── Detect language and save customer ──
+    lang = detect_language(text)
+    upsert_customer(phone, name, language=lang)
 
     if text.lower() in ("menu", "मेनू", "help", "मदद"):
-        welcome = (
-            f"🙏 {'नमस्ते ' + name + ' जी!' if name else 'नमस्ते!'}\n\n"
-            "शारदा ज्वेलर्स, बेमेतरा में आपका स्वागत है।\n"
-            "सन् 1971 से आपके परिवार के ज्वेलर।\n\n"
-            "नीचे से चुनें या कुछ भी पूछें:"
-        )
-        await send_interactive_buttons(phone, welcome, MENU_BUTTONS)
+        await send_interactive_buttons(phone, welcome_msg(name, lang), MENU_BUTTONS)
         return {"status": "menu_sent"}
 
     if text.lower() in ("btn_rates", "bhav", "भाव", "rate", "rates", "gold rate",
@@ -177,7 +176,7 @@ async def receive_message(request: Request):
 
     if text.lower() in ("btn_photos", "photo", "photos", "फोटो", "तस्वीर",
                          "gallery", "दिखाओ", "pictures", "फोटो देखें"):
-        return await _handle_photos(phone, name)
+        return await _handle_photos(phone, name, lang)
 
     if text.lower() in ("btn_products", "products", "गहने", "jewellery", "jewelry",
                          "collection", "हमारे गहने"):
@@ -194,9 +193,9 @@ async def receive_message(request: Request):
     reply, wants_photos, wants_owner = await generate_reply(phone, text, name)
     await send_text(phone, reply)
     if wants_photos:
-        await _send_photos(phone)
+        await _send_photos(phone, lang=lang)
     if wants_owner:
-        await _start_live_chat(phone, name, text)
+        await _start_live_chat(phone, name, text, lang)
     return {"status": "replied"}
 
 
@@ -204,7 +203,7 @@ async def receive_message(request: Request):
 # Live Chat Relay — owner ↔ customer through the bot
 # ═══════════════════════════════════════════════════════════
 
-async def _start_live_chat(customer_phone: str, customer_name: str, customer_msg: str) -> None:
+async def _start_live_chat(customer_phone: str, customer_name: str, customer_msg: str, lang: str = "hi") -> None:
     """Create a live session and notify owners they can reply directly."""
     start_session(customer_phone, customer_name)
 
@@ -220,11 +219,14 @@ async def _start_live_chat(customer_phone: str, customer_name: str, customer_msg
         chat_lines.append(f"  {role}: {txt}")
     chat_summary = "\n".join(chat_lines)
 
+    lang_label = {"hi": "हिंदी", "en": "English", "hinglish": "Hinglish"}.get(lang, lang)
+
     owner_msg = (
         "🔔 *लाइव चैट — ग्राहक जुड़ना चाहता है*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"👤 नाम: {customer_name or 'अज्ञात'}\n"
         f"📱 नंबर: wa.me/{customer_phone}\n"
+        f"🌐 भाषा: {lang_label}\n"
         f"💬 संदेश: {customer_msg}\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"📋 *बातचीत:*\n{chat_summary}\n"
@@ -244,12 +246,10 @@ async def _handle_owner_message(owner_phone: str, text: str, name: str) -> dict:
     if is_end_command(text):
         customer_phone = end_session_for_owner(owner_phone)
         if customer_phone:
+            cust = get_customer(customer_phone)
+            cust_lang = cust.get("language", "hi") if cust else "hi"
             await send_text(owner_phone, "✅ लाइव चैट समाप्त। ग्राहक अब बॉट से बात करेगा।")
-            await send_text(
-                customer_phone,
-                "🙏 मालिक जी ने बातचीत समाप्त की।\n"
-                "अब आप बॉट से बात कर सकते हैं। कुछ भी पूछें या \"menu\" लिखें!",
-            )
+            await send_text(customer_phone, session_ended_msg(cust_lang))
             return {"status": "session_ended"}
         await send_text(owner_phone, "कोई लाइव चैट चल नहीं रही।")
         return {"status": "no_session"}
@@ -268,16 +268,15 @@ async def _handle_owner_message(owner_phone: str, text: str, name: str) -> dict:
         from app.livechat import get_session
         session = get_session(pending)
         cust_name = session["customer_name"] if session else ""
+        cust = get_customer(pending)
+        cust_lang = cust.get("language", "hi") if cust else "hi"
 
         await send_text(
             owner_phone,
             f"✅ आप {cust_name or pending} से जुड़ गए हैं। अब जो भी लिखेंगे, सीधे ग्राहक को जाएगा।\n"
             "चैट खत्म करने के लिए \"बंद\" लिखें।",
         )
-        await send_text(
-            pending,
-            "✅ मालिक जी जुड़ गए हैं! अब आप सीधे बात कर सकते हैं।",
-        )
+        await send_text(pending, owner_connected_msg(cust_lang))
         # Forward this first message too
         await send_text(pending, f"💬 *शारदा ज्वेलर्स:*\n{text}")
         return {"status": "owner_linked_and_relayed"}
@@ -308,22 +307,21 @@ async def _handle_live_customer_message(customer_phone: str, text: str, name: st
     return {"status": "forwarded_to_all_owners"}
 
 
-async def _send_photos(phone: str, count: int = 5) -> None:
+async def _send_photos(phone: str, count: int = 5, lang: str = "hi") -> None:
     """Fetch and send store photos to the customer."""
     photos = await get_store_photos(count)
     if not photos:
-        await send_text(phone, "क्षमा करें, अभी फोटो उपलब्ध नहीं हैं। कृपया दुकान पर आकर हमारा कलेक्शन देखें।")
+        await send_text(phone, no_photos_msg(lang))
         return
     for i, url in enumerate(photos):
-        caption = "शारदा ज्वेलर्स, बेमेतरा" if i == 0 else ""
-        await send_image(phone, url, caption)
+        caption = "Sharda Jewellers, Bemetara" if lang == "en" else "शारदा ज्वेलर्स, बेमेतरा"
+        await send_image(phone, url, caption if i == 0 else "")
 
 
-async def _handle_photos(phone: str, name: str) -> dict:
+async def _handle_photos(phone: str, name: str, lang: str = "hi") -> dict:
     """Handle a direct photo request (from button or keyword)."""
-    greeting = f"📸 {'जी ' + name + ' जी!' if name else 'जी!'} हमारे कुछ गहनों की तस्वीरें भेज रहे हैं:"
-    await send_text(phone, greeting)
-    await _send_photos(phone)
+    await send_text(phone, photo_greeting(name, lang))
+    await _send_photos(phone, lang=lang)
     return {"status": "photos_sent"}
 
 

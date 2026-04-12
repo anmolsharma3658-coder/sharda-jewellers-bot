@@ -35,9 +35,14 @@ def _get_conn() -> sqlite3.Connection:
                 last_seen   TEXT NOT NULL,
                 msg_count   INTEGER NOT NULL DEFAULT 1,
                 tags        TEXT NOT NULL DEFAULT '',
-                notes       TEXT NOT NULL DEFAULT ''
+                notes       TEXT NOT NULL DEFAULT '',
+                language    TEXT NOT NULL DEFAULT 'hi'
             )
         """)
+        try:
+            _conn.execute("ALTER TABLE customers ADD COLUMN language TEXT NOT NULL DEFAULT 'hi'")
+        except sqlite3.OperationalError:
+            pass
         _conn.commit()
         logger.info("Customer DB ready at %s", DB_PATH)
     return _conn
@@ -49,8 +54,8 @@ def _now_iso() -> str:
 
 # ─── Core CRUD ─────────────────────────────────────────────
 
-def upsert_customer(phone: str, name: str = "") -> dict:
-    """Insert a new customer or update last_seen / msg_count for existing."""
+def upsert_customer(phone: str, name: str = "", language: str = "hi") -> dict:
+    """Insert a new customer or update last_seen / msg_count / language."""
     conn = _get_conn()
     now = _now_iso()
 
@@ -63,15 +68,16 @@ def upsert_customer(phone: str, name: str = "") -> dict:
             UPDATE customers
                SET name      = CASE WHEN ? != '' THEN ? ELSE name END,
                    last_seen = ?,
-                   msg_count = msg_count + 1
+                   msg_count = msg_count + 1,
+                   language  = ?
              WHERE phone = ?
-        """, (name, name, now, phone))
+        """, (name, name, now, language, phone))
         conn.commit()
     else:
         conn.execute("""
-            INSERT INTO customers (phone, name, first_seen, last_seen, msg_count)
-            VALUES (?, ?, ?, ?, 1)
-        """, (phone, name, now, now))
+            INSERT INTO customers (phone, name, first_seen, last_seen, msg_count, language)
+            VALUES (?, ?, ?, ?, 1, ?)
+        """, (phone, name, now, now, language))
         conn.commit()
 
     row = conn.execute("SELECT * FROM customers WHERE phone = ?", (phone,)).fetchone()
@@ -135,7 +141,7 @@ def export_csv() -> str:
     customers = get_all_customers()
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=[
-        "phone", "name", "first_seen", "last_seen", "msg_count", "tags", "notes",
+        "phone", "name", "first_seen", "last_seen", "msg_count", "tags", "notes", "language",
     ])
     writer.writeheader()
     writer.writerows(customers)
