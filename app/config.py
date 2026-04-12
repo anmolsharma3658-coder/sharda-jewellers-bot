@@ -16,6 +16,15 @@ AI_IMAGE_GENERATION_ENABLED = os.getenv("AI_IMAGE_GENERATION", "true").strip().l
     "yes",
     "on",
 )
+
+# Jewellery quote calculator (making % of weight × 24K ₹/g; sale GST on subtotal after discount)
+JEWELLERY_MAKING_PCT_ON_24K = float(os.getenv("JEWELLERY_MAKING_PCT_ON_24K", "11"))
+JEWELLERY_SALE_GST_PCT = float(os.getenv("JEWELLERY_SALE_GST_PCT", "3"))
+
+# Gold booking: advance % of (gold + making) subtotal until owner marks paid
+GOLD_BOOKING_ADVANCE_PCT = float(os.getenv("GOLD_BOOKING_ADVANCE_PCT", "25"))
+# Optional: persist .xlsx on disk after each change (use Render Disk path in production)
+GOLD_BOOKINGS_XLSX_PATH = os.getenv("GOLD_BOOKINGS_XLSX_PATH", "").strip()
 GOLD_API_KEY = os.getenv("GOLD_API_KEY", "")
 GOOGLE_PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "")
 

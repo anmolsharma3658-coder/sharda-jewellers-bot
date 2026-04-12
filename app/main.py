@@ -18,6 +18,19 @@ from app.whatsapp import (
     send_image_by_media_id,
 )
 from app.chatbot import generate_reply, is_customer_inspiration_reference_message
+from app.jewellery_quote import parse_quote_command, build_quote_for_params
+from app.gold_bookings import (
+    parse_book_command,
+    create_booking,
+    format_booking_created_customer,
+    format_owner_new_booking,
+    parse_owner_booking_confirm,
+    mark_advance_paid,
+    get_booking,
+    format_booking_confirmed_customer,
+    list_bookings,
+    export_bookings_xlsx_bytes,
+)
 from app.google_photos import get_store_photos
 from app.livechat import (
     start_session, customer_in_session, owner_has_session,
@@ -203,6 +216,33 @@ async def receive_message(request: Request, background_tasks: BackgroundTasks):
     # ── Owner message during live session → relay to customer ──
     if phone in OWNER_PHONES and (owner_has_session(phone) or find_pending_session() or is_end_command(text)):
         return await _handle_owner_message(phone, text, name)
+
+    # ── Quick quote (works even during live chat): quote 12 22 | quote 10 22 5 ──
+    _qp = parse_quote_command(text)
+    if _qp:
+        _qlang = detect_language(text)
+        upsert_customer(phone, name, language=_qlang)
+        _qm = await build_quote_for_params(_qlang, _qp)
+        if _qm:
+            await send_text(phone, _qm)
+        return {"status": "quote_sent"}
+
+    _bp = parse_book_command(text)
+    if _bp:
+        _bg, _bk, _bpr = _bp
+        _blang = detect_language(text)
+        upsert_customer(phone, name, language=_blang)
+        _book = await create_booking(phone, name or "", _bg, _bk, _bpr)
+        if _book:
+            await send_text(phone, format_booking_created_customer(_blang, _book))
+            for op in OWNER_PHONES:
+                await send_text(op, format_owner_new_booking(_book))
+        else:
+            await send_text(
+                phone,
+                "⚠️ लाइव भाव नहीं मिला — बुकिंग दर्ज नहीं हो सकी। दुकान पर कॉल करें।",
+            )
+        return {"status": "gold_booking_created"}
 
     # ── Customer in live chat → forward to owner ──
     if customer_in_session(phone):
@@ -555,6 +595,26 @@ async def _start_live_chat(customer_phone: str, customer_name: str, customer_msg
 async def _handle_owner_message(owner_phone: str, text: str, name: str) -> dict:
     """Route an owner's message: relay to customer or handle session commands."""
 
+    _bid = parse_owner_booking_confirm(text)
+    if _bid is not None:
+        _ex = get_booking(_bid)
+        if not _ex:
+            await send_text(owner_phone, f"बुकिंग #{_bid} नहीं मिली।")
+            return {"status": "booking_unknown"}
+        if _ex["status"] != "pending_advance":
+            await send_text(owner_phone, f"बुकिंग #{_bid} पहले से पुष्ट है या रद्द।")
+            return {"status": "booking_already_done"}
+        _upd = mark_advance_paid(_bid)
+        if _upd and _upd.get("advance_paid"):
+            _cust = get_customer(_upd["phone"])
+            _cl = _cust.get("language", "hi") if _cust else "hi"
+            await send_text(_upd["phone"], format_booking_confirmed_customer(_cl, _upd))
+            await send_text(
+                owner_phone,
+                f"✅ बुकिंग #{_bid} — एडवांस दर्ज। ग्राहक को सूचना भेज दी।",
+            )
+        return {"status": "booking_advance_marked"}
+
     # Check if owner wants to end the session
     if is_end_command(text):
         customer_phone = end_session_for_owner(owner_phone)
@@ -795,9 +855,12 @@ async def admin_stats(x_admin_key: str | None = Header(None)):
     """Quick dashboard stats."""
     if not _check_admin(x_admin_key):
         return Response(content="Unauthorized", status_code=401)
+    from app.gold_bookings import count_bookings_by_status
+
     return {
         "total_customers": get_customer_count(),
         "custom_orders_new": count_new_orders(),
+        "gold_bookings_pending_advance": count_bookings_by_status("pending_advance"),
     }
 
 
@@ -827,5 +890,51 @@ async def admin_update_custom_order(
     if not update_order_status(order_id, new_status):
         return Response(content="Order not found", status_code=404)
     return {"ok": True, "id": order_id, "status": new_status}
+
+
+@app.get("/admin/gold-bookings")
+async def admin_gold_bookings_list(
+    status: str | None = Query(None, description="pending_advance | confirmed | cancelled"),
+    limit: int = Query(200, ge=1, le=2000),
+    x_admin_key: str | None = Header(None),
+):
+    if not _check_admin(x_admin_key):
+        return Response(content="Unauthorized", status_code=401)
+    return {"bookings": list_bookings(limit=limit, status=status)}
+
+
+@app.get("/admin/gold-bookings/export.xlsx")
+async def admin_gold_bookings_export_xlsx(x_admin_key: str | None = Header(None)):
+    """Download all bookings as Excel (openpyxl)."""
+    if not _check_admin(x_admin_key):
+        return Response(content="Unauthorized", status_code=401)
+    data = export_bookings_xlsx_bytes()
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="gold_bookings.xlsx"'},
+    )
+
+
+@app.post("/admin/gold-bookings/{booking_id}/advance")
+async def admin_gold_booking_mark_advance(
+    booking_id: int,
+    x_admin_key: str | None = Header(None),
+):
+    """Mark 25% advance received (same as owner WhatsApp command)."""
+    if not _check_admin(x_admin_key):
+        return Response(content="Unauthorized", status_code=401)
+    ex = get_booking(booking_id)
+    if not ex:
+        return Response(content="Booking not found", status_code=404)
+    if ex["status"] != "pending_advance":
+        return {"ok": True, "already_confirmed": True, "booking": ex}
+    b = mark_advance_paid(booking_id)
+    if not b:
+        return Response(content="Update failed", status_code=500)
+    _cust = get_customer(b["phone"])
+    _cl = _cust.get("language", "hi") if _cust else "hi"
+    await send_text(b["phone"], format_booking_confirmed_customer(_cl, b))
+    return {"ok": True, "booking": b}
 
 

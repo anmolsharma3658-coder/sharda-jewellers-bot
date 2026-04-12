@@ -20,5 +20,13 @@ services:
         sync: false
       - key: AI_IMAGE_GENERATION
         sync: false
+      - key: JEWELLERY_MAKING_PCT_ON_24K
+        sync: false
+      - key: JEWELLERY_SALE_GST_PCT
+        sync: false
+      - key: GOLD_BOOKING_ADVANCE_PCT
+        sync: false
+      - key: GOLD_BOOKINGS_XLSX_PATH
+        sync: false
       - key: GOLD_API_KEY
         sync: false

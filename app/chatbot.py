@@ -5,8 +5,21 @@ import logging
 import re
 from google import genai
 from google.genai import types
-from app.config import GEMINI_API_KEY
+from app.config import GEMINI_API_KEY, OWNER_PHONES
 from app.gold_rates import get_rates, format_rates_message
+from app.jewellery_quote import (
+    build_quote_for_params,
+    parse_quote_tag_inner,
+    strip_quote_tag,
+)
+from app.gold_bookings import (
+    create_booking,
+    format_booking_created_customer,
+    format_owner_new_booking,
+    parse_booking_tag_inner,
+    strip_gold_booking_tag,
+)
+from app.whatsapp import send_text as wa_send_text
 from app.customers import get_customer
 from app.language import detect_language
 from app.livechat import owner_escalation_allowed
@@ -91,7 +104,7 @@ Google: https://business.google.com/n/5073554692225386022/searchprofile?hl=en
 2. लहजा: ऊपर PERSONALITY देखो — पारिवारिक + थोड़ा fun, कभी सूखा औपचारिक जवाब मत दो।
 3. कभी भी किसी दूसरी दुकान का नाम मत लो और न ही comparison करो।
 4. अगर कोई ऐसा सवाल आए जो ज्वेलरी से संबंधित न हो, तो विनम्रता से कहो कि तुम सिर्फ गहनों में मदद कर सकते हो।
-5. कीमत का अनुमान देने से बचो — हमेशा कहो "आज के भाव के हिसाब से" और लाइव रेट बताओ, या दुकान पर आने को कहो।
+5. कीमत: अगर ग्राहक ने *वज़न (ग्राम)* और *शुद्धता (22K/24K/18K/14K)* दे दिया हो (या डिस्काउंट %), तो [JEWELLERY_QUOTE] tag से औपचारिक *अनुमानित कोट* बन सकता है — उसे इस्तेमाल करो। बिना संख्याओं के सिर्फ़ "kitna lagega" पर लाइव भाव + दुकान पर फाइनल बिल कहो।
 6. जवाब WhatsApp-friendly रखो — ज़्यादातर 80–200 शब्द; ज़रूरत हो तो थोड़ा लंबा OK।
 7. जब ग्राहक पहली बार मैसेज करे, तो उसे स्वागत करो और मुख्य विकल्प बताओ।
 8. अगर ग्राहक का नाम मिले, तो उसे नाम से संबोधित करो।
@@ -117,6 +130,20 @@ Google: https://business.google.com/n/5073554692225386022/searchprofile?hl=en
   (आपके पास क्या डिज़ाइन हैं, दुकान दिखाओ, collection photos, store gallery, नमूने दिखाओ हमारे)।
 
 अगर ग्राहक इनमें से कुछ पूछे, तो तुम्हें FUNCTION_CALL prefix के साथ जवाब देना है:
+
+• कोट / कैलकुलेटर / अनुमान / "X gram Y karat kitna" / price estimate / making charge ke saath total:
+  जब ग्राहक के संदेश में *वज़न (grams)* और *karat (22/24/18/14)* साफ़ हो (और वे छूट % मांगें तो वो भी):
+  → EXACTLY एक लाइन: [JEWELLERY_QUOTE] weight=W karat=K discount=D [/JEWELLERY_QUOTE]
+     W = decimal grams, K = 22 or 24 or 18 or 14, D = optional छूट % (0 अगर नहीं; पूरे gold+making subtotal पर)
+  → फिर reply_language में 1 वाक्य intro (संक्षिप्त)
+  → अगर वज़न या karat अज्ञात — पूछो, tag मत लगाओ
+
+• गोल्ड *बुकिंग* / reserve / lock rate / book gold / सोना बुक करना:
+  जब ग्राहक साफ़ कहे कि वे X ग्राम Y karat सोना *बुक* करना चाहते हैं (ऑर्डर/शादी/निवेश जैसा संदर्भ):
+  → EXACTLY: [GOLD_BOOKING] grams=G karat=K prompt="संक्षिप्त विवरण" [/GOLD_BOOKING]
+     G = decimal grams, K = 22/24/18/14, prompt = छोटा विवरण (Roman या Devanagari, 200 अक्षर तक)
+  → फिर reply_language में संक्षिप्त intro
+  → बुकिंग *तभी* जब grams + karat पता हों; नहीं तो पूछो
 
 • "भाव", "rate", "price", "सोने का भाव", "gold rate", "चाँदी का भाव", "silver rate", "aaj ka bhav"
   → जवाब की शुरुआत में EXACTLY यह लिखो: [RATES_REQUEST]
@@ -161,7 +188,7 @@ CRITICAL OUTPUT RULES
 ═══════════════════════════════════════
 - User messages are ONLY what the customer typed. There is NO [CONTEXT] line in their text.
 - NEVER output [CONTEXT], "भाषा=", "reply_language", "Customer name:", message counts, dates, tags, or ANY internal/session metadata.
-- Your reply must be ONLY the customer-facing WhatsApp text (plus optional [RATES_REQUEST], [AI_IMAGE_REQUEST], [AI_IMAGE_PROMPT]… tags where rules say so — server strips tags).
+- Your reply must be ONLY the customer-facing WhatsApp text (plus optional [RATES_REQUEST], [JEWELLERY_QUOTE]…[/JEWELLERY_QUOTE], [GOLD_BOOKING]…[/GOLD_BOOKING], [AI_IMAGE_REQUEST], [AI_IMAGE_PROMPT]… tags where rules say so — server strips tags).
 - Follow reply_language from the internal block at the bottom of these instructions — never mention it to the user.
 """
 
@@ -367,6 +394,35 @@ async def generate_reply(phone: str, user_text: str, user_name: str = "") -> tup
 
     if "[MENU_REQUEST]" in reply_text:
         reply_text = reply_text.replace("[MENU_REQUEST]", "").strip()
+
+    reply_text, quote_inner = strip_quote_tag(reply_text)
+    if quote_inner is not None:
+        q_params = parse_quote_tag_inner(quote_inner)
+        if q_params:
+            qmsg = await build_quote_for_params(lang, q_params)
+            if qmsg:
+                reply_text = f"{reply_text}\n\n{qmsg}".strip() if reply_text.strip() else qmsg
+
+    reply_text, gb_inner = strip_gold_booking_tag(reply_text)
+    if gb_inner is not None:
+        bp = parse_booking_tag_inner(gb_inner)
+        if bp:
+            g_grams, g_karat, g_prompt = bp
+            cust_nm = display_name or user_name or ""
+            booking_row = await create_booking(phone, cust_nm, g_grams, g_karat, g_prompt)
+            if booking_row:
+                bmsg = format_booking_created_customer(lang, booking_row)
+                reply_text = f"{reply_text}\n\n{bmsg}".strip() if reply_text.strip() else bmsg
+                for op in OWNER_PHONES:
+                    await wa_send_text(op, format_owner_new_booking(booking_row))
+            else:
+                if lang == "en":
+                    _bfail = "⚠️ Live rates unavailable — booking could not be saved. Please call the store."
+                elif lang == "hinglish":
+                    _bfail = "⚠️ Live rates nahi mile — booking save nahi hui. Dukaan par call karo."
+                else:
+                    _bfail = "⚠️ लाइव भाव नहीं मिला — बुकिंग अभी दर्ज नहीं हो सकी। कृपया दुकान पर कॉल करें।"
+                reply_text = f"{reply_text}\n\n{_bfail}".strip() if reply_text.strip() else _bfail
 
     _has_photos = "[PHOTOS_REQUEST]" in reply_text
     if _has_photos:
