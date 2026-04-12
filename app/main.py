@@ -11,6 +11,11 @@ from app.whatsapp import (
 )
 from app.chatbot import generate_reply
 from app.google_photos import get_store_photos
+from app.livechat import (
+    start_session, customer_in_session, owner_has_session,
+    find_pending_session, link_owner, touch,
+    end_session_for_owner, is_end_command,
+)
 from app.customers import (
     upsert_customer, get_customer, get_all_customers, get_customer_count,
     search_customers, update_tags, update_notes, delete_customer,
@@ -140,10 +145,18 @@ async def receive_message(request: Request):
     name = msg["name"]
 
     logger.info("Message from %s (%s): %s", name or "unknown", phone, text[:100])
-
-    upsert_customer(phone, name)
-
     await mark_read(msg_id)
+
+    # ── Owner message → relay to customer or handle end ──
+    if phone in OWNER_PHONES:
+        return await _handle_owner_message(phone, text, name)
+
+    # ── Customer in live chat → forward to owner ──
+    if customer_in_session(phone):
+        return await _handle_live_customer_message(phone, text, name)
+
+    # ── Normal customer flow ──
+    upsert_customer(phone, name)
 
     if text.lower() in ("menu", "मेनू", "help", "मदद"):
         welcome = (
@@ -183,8 +196,116 @@ async def receive_message(request: Request):
     if wants_photos:
         await _send_photos(phone)
     if wants_owner:
-        await _notify_owners(phone, name, text)
+        await _start_live_chat(phone, name, text)
     return {"status": "replied"}
+
+
+# ═══════════════════════════════════════════════════════════
+# Live Chat Relay — owner ↔ customer through the bot
+# ═══════════════════════════════════════════════════════════
+
+async def _start_live_chat(customer_phone: str, customer_name: str, customer_msg: str) -> None:
+    """Create a live session and notify owners they can reply directly."""
+    start_session(customer_phone, customer_name)
+
+    from app.chatbot import _get_history
+    history = _get_history(customer_phone)
+
+    chat_lines = []
+    for entry in history[-10:]:
+        role = "ग्राहक" if entry.role == "user" else "Bot"
+        txt = entry.parts[0].text if entry.parts else ""
+        if len(txt) > 200:
+            txt = txt[:200] + "..."
+        chat_lines.append(f"  {role}: {txt}")
+    chat_summary = "\n".join(chat_lines)
+
+    owner_msg = (
+        "🔔 *लाइव चैट — ग्राहक जुड़ना चाहता है*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 नाम: {customer_name or 'अज्ञात'}\n"
+        f"📱 नंबर: wa.me/{customer_phone}\n"
+        f"💬 संदेश: {customer_msg}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"📋 *बातचीत:*\n{chat_summary}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "👉 *सीधे यहाँ जवाब दें* — आपका मैसेज ग्राहक को पहुँच जाएगा।\n"
+        "👉 चैट खत्म करने के लिए \"बंद\" लिखें।"
+    )
+
+    for op in OWNER_PHONES:
+        await send_text(op, owner_msg)
+
+
+async def _handle_owner_message(owner_phone: str, text: str, name: str) -> dict:
+    """Route an owner's message: relay to customer or handle session commands."""
+
+    # Check if owner wants to end the session
+    if is_end_command(text):
+        customer_phone = end_session_for_owner(owner_phone)
+        if customer_phone:
+            await send_text(owner_phone, "✅ लाइव चैट समाप्त। ग्राहक अब बॉट से बात करेगा।")
+            await send_text(
+                customer_phone,
+                "🙏 मालिक जी ने बातचीत समाप्त की।\n"
+                "अब आप बॉट से बात कर सकते हैं। कुछ भी पूछें या \"menu\" लिखें!",
+            )
+            return {"status": "session_ended"}
+        await send_text(owner_phone, "कोई लाइव चैट चल नहीं रही।")
+        return {"status": "no_session"}
+
+    # Already linked to a customer → forward message
+    linked_customer = owner_has_session(owner_phone)
+    if linked_customer:
+        touch(linked_customer)
+        await send_text(linked_customer, f"💬 *शारदा ज्वेलर्स:*\n{text}")
+        return {"status": "relayed_to_customer"}
+
+    # Not linked yet — check if there's a pending customer waiting
+    pending = find_pending_session()
+    if pending:
+        link_owner(owner_phone, pending)
+        from app.livechat import get_session
+        session = get_session(pending)
+        cust_name = session["customer_name"] if session else ""
+
+        await send_text(
+            owner_phone,
+            f"✅ आप {cust_name or pending} से जुड़ गए हैं। अब जो भी लिखेंगे, सीधे ग्राहक को जाएगा।\n"
+            "चैट खत्म करने के लिए \"बंद\" लिखें।",
+        )
+        await send_text(
+            pending,
+            "✅ मालिक जी जुड़ गए हैं! अब आप सीधे बात कर सकते हैं।",
+        )
+        # Forward this first message too
+        await send_text(pending, f"💬 *शारदा ज्वेलर्स:*\n{text}")
+        return {"status": "owner_linked_and_relayed"}
+
+    # No pending session — just ignore or acknowledge
+    return {"status": "owner_no_action"}
+
+
+async def _handle_live_customer_message(customer_phone: str, text: str, name: str) -> dict:
+    """Customer is in a live session — forward their message to the connected owner."""
+    from app.livechat import get_session
+    touch(customer_phone)
+    session = get_session(customer_phone)
+
+    if not session:
+        return {"status": "session_expired"}
+
+    owner_phone = session.get("owner_phone")
+    cust_label = name or customer_phone
+
+    if owner_phone:
+        await send_text(owner_phone, f"👤 *{cust_label}:*\n{text}")
+        return {"status": "relayed_to_owner"}
+
+    # No owner connected yet — forward to all owners
+    for op in OWNER_PHONES:
+        await send_text(op, f"👤 *{cust_label} (जवाब का इंतज़ार):*\n{text}")
+    return {"status": "forwarded_to_all_owners"}
 
 
 async def _send_photos(phone: str, count: int = 5) -> None:
@@ -362,31 +483,3 @@ async def admin_stats(x_admin_key: str | None = Header(None)):
     return {"total_customers": get_customer_count()}
 
 
-async def _notify_owners(customer_phone: str, customer_name: str, customer_msg: str) -> None:
-    """Forward customer message to both owners with chat context."""
-    from app.chatbot import _get_history
-    history = _get_history(customer_phone)
-
-    chat_summary_lines = []
-    for entry in history[-10:]:
-        role = "ग्राहक" if entry.role == "user" else "Bot"
-        text = entry.parts[0].text if entry.parts else ""
-        if len(text) > 200:
-            text = text[:200] + "..."
-        chat_summary_lines.append(f"  {role}: {text}")
-    chat_summary = "\n".join(chat_summary_lines)
-
-    owner_msg = (
-        f"🔔 *नया ग्राहक संपर्क*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 नाम: {customer_name or 'अज्ञात'}\n"
-        f"📱 नंबर: wa.me/{customer_phone}\n"
-        f"💬 संदेश: {customer_msg}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📋 *बातचीत का सारांश:*\n{chat_summary}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"कृपया ग्राहक से संपर्क करें।"
-    )
-
-    for owner_phone in OWNER_PHONES:
-        await send_text(owner_phone, owner_msg)
