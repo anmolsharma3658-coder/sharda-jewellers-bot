@@ -89,6 +89,13 @@ async def health():
     }
 
 
+@app.get("/test")
+async def test_chat(msg: str = Query("नमस्ते")):
+    """Debug endpoint to test bot replies directly."""
+    reply, wants_photos = await generate_reply("test_user", msg, "TestUser")
+    return {"input": msg, "reply": reply, "wants_photos": wants_photos}
+
+
 @app.get("/webhook")
 async def verify_webhook(
     hub_mode: str = Query(None, alias="hub.mode"),
