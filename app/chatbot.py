@@ -10,7 +10,7 @@ from app.gold_rates import get_rates, format_rates_message
 logger = logging.getLogger(__name__)
 
 client = genai.Client(api_key=GEMINI_API_KEY)
-MODEL = "gemini-2.0-flash-lite"
+MODEL = "gemini-2.5-flash-lite"
 
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 2.0
