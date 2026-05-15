@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 CACHE_TTL_SECONDS = 30 * 60
 TROY_OZ_TO_GRAM = 31.1035
 
-IMPORT_DUTY_PCT = 5.0   # Budget 2026: BCD on gold/silver
+IMPORT_DUTY_PCT = 15.0   # Budget 2026: BCD on gold/silver
 GST_PCT = 3.0            # GST on precious metals
 
 _DUTY_MULT = (1 + IMPORT_DUTY_PCT / 100) * (1 + GST_PCT / 100)
